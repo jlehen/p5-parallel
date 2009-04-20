@@ -271,6 +271,8 @@ sub traite {
 	my ($slaveid, $jobid, $host, $jobmax) = @_;
 	my $status;
 
+	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
+
 	if ($logdir) {
 	if (not defined open $loghandle, ">>$logdir/$host") {
 		&printlog($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
@@ -325,7 +327,7 @@ sub traite {
 
 	$status = &timedrun($timeout,"$rsh ".$ssh_user."@".$host." 'cd /tmp && chmod +x $scriptname && ./$scriptname 2>&1 && echo 0'",$slaveid);
 
-	&stamp_ce($host, "END");
+	&stamp_ce($host, "END", $slaveid);
 	&timedrun(60,"$rsh ".$ssh_user."@".$host." 'cd /tmp && rm -f $scriptname'",$slaveid);
 
 	if ($status) {
@@ -343,6 +345,11 @@ OUT:
 # loop over machine list and start as many threads as needed
 # threads are detached to be sure to free resources...
 ############################################################
+
+$SIG{'INT'} = $SIG{'TERM'} = sub {
+	Job::Parallel::terminate();
+	if (!Job::Parallel::isChild()) { exit 0 }
+};
 
 Job::Parallel::run($semaphore_nb, \&traite, [ scalar @hostlist ], @hostlist);
 
