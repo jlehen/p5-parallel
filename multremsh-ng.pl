@@ -35,6 +35,7 @@ my @putfiles;
 my $man;
 my $ping=1;
 my $semaphore_nb = 1; 
+my $verbose = 0;
 my $logdir;
 my $dontexec;
 my $rsh='ssh';
@@ -76,6 +77,7 @@ GetOptions(
 	   'timeout=i' => \$_o_timeout,
 	   'user=s' => \$ssh_user,
 	   'keyfile=s' => \$ssh_keyfile,
+	   'verbose|v' => \$verbose,
 	   ) or (die $!);
 
 if ($man) { 
@@ -151,17 +153,33 @@ if (not $runlocally) {
 } else {
   $scriptname = $scriptfile;
 }
-&printlog('',"== Thread number=$semaphore_nb");
+&logverbose('',"== Thread number=$semaphore_nb");
 
 
 #############################
 # Sub routine to print logs
 #############################
 sub printlog {
-	my ($tag, @text) = @_;
+	my ($verboselog, $tag, @text) = @_;
 	my $now_string = strftime("[%a %b %e %H:%M:%S %Y]", localtime);
-	print $now_string," ($tag) ",@text,"\n";
-	if (defined $loghandle) { print $loghandle @text,"\n" }
+	if (!$verboselog || $verbose) {
+		print $now_string," ($tag) ",@text,"\n";
+	}
+	if (defined $loghandle) {
+		print $loghandle $now_string, @text,"\n";
+	}
+}
+
+sub logerror {
+	printlog(0, @_);
+}
+
+sub lognormal {
+	printlog(0, @_);
+}
+
+sub logverbose {
+	printlog(1, @_);
 }
 
 #############################
@@ -180,7 +198,7 @@ sub pipedrun {
 	my $pipe = new IO::Pipe;
 	my $pid = fork;
 	if (not defined $pid) {
-		&printlog($slaveid, "== Can't execute command: (fork) $!");
+		&logerror($slaveid, "== Can't execute command: (fork) $!");
 		return 300;
 	}
 	if ($pid == 0) {
@@ -188,26 +206,26 @@ sub pipedrun {
 		# Set pipe as stdout.
 		my $stdout = \*STDOUT;
 		if (not defined $stdout->fdopen($pipe->fileno, 'w')) {
-			&printlog($slaveid, "== Can't execute command: (fdopen) $!");
+			&logerror($slaveid, "== Can't execute command: (fdopen) $!");
 			exit 127;
 		}
 		# Shutdown a warning from Perl: it yells when something else than
 		# "exit" is called after "exec".
 		no warnings;
 		exec $command;
-		&printlog($slaveid, "== Can't execute command: (exec) $!");
+		&logerror($slaveid, "== Can't execute command: (exec) $!");
 		exit 127;
 	}
 	$pipe->reader();
 	while (<$pipe>) {
 		chomp;
-		&printlog($slaveid, $_);
+		&lognormal($slaveid, $_);
 	}
 	$pipe->close;
 	waitpid $pid, 0;
 	my $status = $?;
 	if ($status & 127) {
-		&printlog($slaveid, "== Command killed with signal ".($status & 127));
+		&logerror($slaveid, "== Command killed with signal ".($status & 127));
 		return 301;
 	}
 	return ($status >> 8);
@@ -217,11 +235,11 @@ sub pipedrun {
 sub timedrun {
 	my ($timer,$command,$slaveid)=@_;
 
-	&printlog($slaveid, "== Running $timer $command");
+	&logverbose($slaveid, "== Running $timer $command");
 	my $status = &Job::Timed::runSubr($timer, \&pipedrun, @_);
 	if (not defined $status) {
-	&printlog($slaveid, "== Job::Timed::runSubr: ".&Job::Timed::error());
-	return 400;
+		&logverbose($slaveid, "== Job::Timed::runSubr: ".&Job::Timed::error());
+		return 400;
 	}
 	return $status;
 }
@@ -253,17 +271,17 @@ sub traite {
 
 	if ($logdir) {
 		if (not defined open $loghandle, ">>$logdir/$host") {
-			&printlog($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
+			&logerror($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
 		} else {
 			# Shared among multiple process, so disable buffering.
 			$loghandle->autoflush;
 		}
 	}
 
-	&printlog($slaveid, "============= $host ($jobid/$jobmax)");
+	&lognormal($slaveid, "============= $host ($jobid/$jobmax)");
 	if ($ping) {
 		if (&timedrun(5, "ping -c 1 $host >/dev/null 2>&1", $slaveid)) {
-			&printlog($slaveid, "== ERROR: Cannot ping '$host'");
+			&logerror($slaveid, "== ERROR: Cannot ping '$host'");
 			$status = 500;
 			goto OUT;
 		}
@@ -272,48 +290,48 @@ sub traite {
 	if ($runlocally) {
 		$status = &timedrun($timeout, "chmod +x $scriptname && $scriptname $scriptoptions $host", $slaveid);
 		if ($status) {
-				&printlog($slaveid, "== ERROR: Script returned a non-zero status $status");
+				&logerror($slaveid, "== ERROR: Script returned a non-zero status $status");
 		}
 		goto OUT;
 	}
 
 	$status = &stamp_ce($host, "BEGIN", $slaveid);
 	if ($status) {
-		&printlog($slaveid, "== ERROR: Can't connect to host '$host'");
+		&logerror($slaveid, "== ERROR: Can't connect to host '$host'");
 		$status = 505;
 		goto OUT;
 	}
 
 	if (@putfiles) {
-		&printlog($slaveid, "== Uploading ",join(' ', @putfiles)," to $host:/tmp/");
+		&logverbose($slaveid, "== Uploading ",join(' ', @putfiles)," to $host:/tmp/");
 
 		foreach my $putfile (@putfiles) {
 			$status = &timedrun(60, "$rcp -r $putfile ".$ssh_user."@".$host.":/tmp/",$slaveid);
 			if ($status) {
-				&printlog($slaveid, "== ERROR: Failed to push '$putfile' on host '$host'");
+				&logerror($slaveid, "== ERROR: Failed to push '$putfile' on host '$host'");
 			}
 			goto OUT;
 		}
 	}
 
-	&printlog($slaveid, "== Uploading $scriptfile to $host:/tmp/");
+	&logverbose($slaveid, "== Uploading $scriptfile to $host:/tmp/");
 	$status = &timedrun(60,"$rcp $scriptfile ".$ssh_user."@".$host.":/tmp/$scriptname",$slaveid);
 	if ($status) {
-		&printlog($slaveid, "== ERROR: Failed to push '$scriptfile' on host '$host'");
+		&logerror($slaveid, "== ERROR: Failed to push '$scriptfile' on host '$host'");
 		goto OUT;
 	}
 
-	$status = &timedrun($timeout,"$rsh ".$ssh_user."@".$host." 'cd /tmp && chmod +x $scriptname && ./$scriptname 2>&1 && echo 0'",$slaveid);
+	$status = &timedrun($timeout,"$rsh ".$ssh_user."@".$host." 'cd /tmp && chmod +x $scriptname && ./$scriptname 2>&1'",$slaveid);
 
 	&stamp_ce($host, "END", $slaveid);
 	&timedrun(60,"$rsh ".$ssh_user."@".$host." 'cd /tmp && rm -f $scriptname'",$slaveid);
 
 	if ($status) {
-		&printlog($slaveid, "== ERROR: Script returned a non-zero status $status on host '$host'");
+		&logerror($slaveid, "== ERROR: Script returned a non-zero status $status on host '$host'");
 	}
 
 OUT:
-	&printlog($slaveid, "== End of thread");
+	&logverbose($slaveid, "== End of thread");
 	if (defined $loghandle) { close $loghandle }
 	return $status;
 }
