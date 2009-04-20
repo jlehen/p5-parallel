@@ -1,6 +1,8 @@
 #!/usr/bin/perl -w
 #
 # 2008-2009 Jeremie Le Hen <jeremie.le-hen@sgcib.com>
+#
+# Based on multremsh.pl:
 # 2004 Vincent Haverlant <vincent.haverlant@sgcib.com> 
 # $Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $
 
@@ -34,11 +36,7 @@ my $man;
 my $ping=1;
 my $semaphore_nb = 1; 
 my $logdir;
-my $onsuccess;
-my $onerror;
-my $sqlquery;
 my $dontexec;
-my $printhostname;
 my $rsh='ssh';
 my %rcp_commands = ( 'rsh' => 'rcp',
 			 'remsh' => 'rcp',
@@ -49,7 +47,6 @@ my $loghandle;
 my $noce=0;
 my $thread_max=50;
 my $runlocally;
-my $nostamp;
 my $furtive;
 my ($_o_timeout, $timeout);
 my $ssh_user = $ENV{'LOGNAME'};
@@ -71,13 +68,9 @@ GetOptions(
 	   'help|man|h' => \$man,
 	   'L' => \$runlocally,
 	   'N'=> \$dontexec,
-	   'M'=> \$printhostname,
 	   'ping!' => \$ping,
 	   'rsh|e=s' => \$rsh,
-	   'onsuccess=s' => \$onsuccess,
-	   'onerror=s' => \$onerror,
 	   'spawn=i' => \$semaphore_nb,
-	   'sqllist=s' => \$sqlquery,
 	   'ce=i' => \$noce,
 	   'furtive|f' => \$furtive,
 	   'timeout=i' => \$_o_timeout,
@@ -100,21 +93,6 @@ else {
 if ($runlocally and @putfiles) {
 	die "No need to push files when run locally";
 }
-
-################################################
-# Checkl for SQL query
-#if ($sqlquery && $sqlquery =~ /select name/i) {
-#	my $dsn='DBI:mysql:database=parc;host=marley';
-#	my $dbh=DBI->connect($dsn,'guest','');
-#	my $sth=$dbh->prepare($sqlquery);
-#	$sth->execute;
-#	my $numRows=$sth->rows;
-#	while (my $row = $sth->fetchrow_hashref) {
-#	&printlog($row->{'Name'});
-#	push @hostlist, $row->{'Name'};
-#	}
-#}
-###############################################
 
 if ((!$listemachine && !@hostlist) || !$scriptfile || !$logmessage) {
 	print "Some things misssing\n";
@@ -394,7 +372,6 @@ Options:
 	-h|--help|--man
 	-L
 	-N 
-	-M
 	--timeout=<timeout>					time to wait for command execution in seconds
 	--user=<ssh username>		   Username used to make ssh connections
 	--keyfile=<ssh private key file>		Private key used to make ssh connections
