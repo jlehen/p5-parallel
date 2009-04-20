@@ -314,6 +314,7 @@ sub traite {
 
 OUT:
 	&printlog($slaveid, "== End of thread");
+	if (defined $loghandle) { close $loghandle }
 	return $status;
 }
 
