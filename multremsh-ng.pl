@@ -274,55 +274,55 @@ sub traite {
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
 
 	if ($logdir) {
-	if (not defined open $loghandle, ">>$logdir/$host") {
-		&printlog($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
-	} else {
-		# Shared among multiple process, so disable buffering.
-		$loghandle->autoflush;
-	}
+		if (not defined open $loghandle, ">>$logdir/$host") {
+			&printlog($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
+		} else {
+			# Shared among multiple process, so disable buffering.
+			$loghandle->autoflush;
+		}
 	}
 
 	&printlog($slaveid, "============= $host ($jobid/$jobmax)");
 	if ($ping) {
-	if (&timedrun(5, "ping -c 1 $host >/dev/null 2>&1", $slaveid)) {
-		&printlog($slaveid, "== ERROR: Cannot ping '$host'");
-		$status = 500;
-		goto OUT;
-	}
+		if (&timedrun(5, "ping -c 1 $host >/dev/null 2>&1", $slaveid)) {
+			&printlog($slaveid, "== ERROR: Cannot ping '$host'");
+			$status = 500;
+			goto OUT;
+		}
 	}
 
 	if ($runlocally) {
-	$status = &timedrun($timeout, "chmod +x $scriptname && $scriptname $scriptoptions $host", $slaveid);
-	if ($status) {
-			&printlog($slaveid, "== ERROR: Script returned a non-zero status $status");
-	}
-	goto OUT;
+		$status = &timedrun($timeout, "chmod +x $scriptname && $scriptname $scriptoptions $host", $slaveid);
+		if ($status) {
+				&printlog($slaveid, "== ERROR: Script returned a non-zero status $status");
+		}
+		goto OUT;
 	}
 
 	$status = &stamp_ce($host, "BEGIN", $slaveid);
 	if ($status) {
-	&printlog($slaveid, "== ERROR: Can't connect to host '$host'");
-	$status = 505;
-	goto OUT;
+		&printlog($slaveid, "== ERROR: Can't connect to host '$host'");
+		$status = 505;
+		goto OUT;
 	}
 
 	if (@putfiles) {
-	&printlog($slaveid, "== Uploading ",join(' ', @putfiles)," to $host:/tmp/");
+		&printlog($slaveid, "== Uploading ",join(' ', @putfiles)," to $host:/tmp/");
 
-	foreach my $putfile (@putfiles) {
-		$status = &timedrun(60, "$rcp -r $putfile ".$ssh_user."@".$host.":/tmp/",$slaveid);
-		if ($status) {
-			&printlog($slaveid, "== ERROR: Failed to push '$putfile' on host '$host'");
+		foreach my $putfile (@putfiles) {
+			$status = &timedrun(60, "$rcp -r $putfile ".$ssh_user."@".$host.":/tmp/",$slaveid);
+			if ($status) {
+				&printlog($slaveid, "== ERROR: Failed to push '$putfile' on host '$host'");
+			}
+			goto OUT;
 		}
-		goto OUT;
-	}
 	}
 
 	&printlog($slaveid, "== Uploading $scriptfile to $host:/tmp/");
 	$status = &timedrun(60,"$rcp $scriptfile ".$ssh_user."@".$host.":/tmp/$scriptname",$slaveid);
 	if ($status) {
-	&printlog($slaveid, "== ERROR: Failed to push '$scriptfile' on host '$host'");
-	goto OUT;
+		&printlog($slaveid, "== ERROR: Failed to push '$scriptfile' on host '$host'");
+		goto OUT;
 	}
 
 	$status = &timedrun($timeout,"$rsh ".$ssh_user."@".$host." 'cd /tmp && chmod +x $scriptname && ./$scriptname 2>&1 && echo 0'",$slaveid);
@@ -331,7 +331,7 @@ sub traite {
 	&timedrun(60,"$rsh ".$ssh_user."@".$host." 'cd /tmp && rm -f $scriptname'",$slaveid);
 
 	if ($status) {
-	&printlog($slaveid, "== ERROR: Script returned a non-zero status $status on host '$host'");
+		&printlog($slaveid, "== ERROR: Script returned a non-zero status $status on host '$host'");
 	}
 
 OUT:
