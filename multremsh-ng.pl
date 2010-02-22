@@ -43,12 +43,10 @@ my %rcp_commands = ( 'rsh' => 'rcp',
 			 'remsh' => 'rcp',
 			 'ssh' => 'scp');
 my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
-my $logmessage;
+my $syslogmsg;
 my $loghandle;
-my $noce=0;
 my $thread_max=50;
 my $runlocally;
-my $furtive;
 my ($_o_timeout, $timeout);
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
@@ -63,7 +61,7 @@ GetOptions(
 	   'liste|l=s' => \$listemachine,
 	   'script|s=s' => \$scriptfile,
 		 'scriptoptions=s' => \$scriptoptions,
-	   'message|m=s' => \$logmessage,
+	   's=s' => \$syslogmsg,
 	   'put=s' => \@putfiles,
 	   'logdir=s' => \$logdir,
 	   'help|man|h' => \$man,
@@ -72,8 +70,6 @@ GetOptions(
 	   'ping!' => \$ping,
 	   'rsh|e=s' => \$rsh,
 	   'spawn=i' => \$semaphore_nb,
-	   'ce=i' => \$noce,
-	   'furtive|f' => \$furtive,
 	   'timeout=i' => \$_o_timeout,
 	   'user=s' => \$ssh_user,
 	   'keyfile=s' => \$ssh_keyfile,
@@ -96,7 +92,7 @@ if ($runlocally and @putfiles) {
 	die "No need to push files when run locally";
 }
 
-if ((!$listemachine && !@hostlist) || !$scriptfile || !$logmessage) {
+if ((!$listemachine && !@hostlist) || !$scriptfile) {
 	print "Some things misssing\n";
 	pod2usage(1);
 	exit(0);
@@ -209,8 +205,8 @@ sub pipedrun {
 			&logerror($slaveid, "== Can't execute command: (fdopen) $!");
 			exit 127;
 		}
-		# Shutdown a warning from Perl: it yells when something else than
-		# "exit" is called after "exec".
+		# Shutdown a warning from Perl: it yells when something else
+		# than "exit" is called after "exec".
 		no warnings;
 		exec $command;
 		&logerror($slaveid, "== Can't execute command: (exec) $!");
@@ -250,9 +246,8 @@ sub timedrun {
 #############################
 sub stamp_ce {
 	my ($host, $stamp, $slaveid)=@_;
-	return 0 if ($noce==-1);
-	return 0 if ($furtive);
-	my $retval=&timedrun(30,"$rsh ".$ssh_user."@".$host." 'logger -p $logger_pri \"$noce: $logmessage $stamp\"'",$slaveid);
+	return 0 if (not defined $syslogmsg);
+	my $retval=&timedrun(30,"$rsh ".$ssh_user."@".$host." 'logger -p $logger_pri \"$syslogmsg $stamp\"'",$slaveid);
 	return $retval;
 }
 
@@ -382,8 +377,7 @@ Options:
 	-l|--liste=<filename>					
 	-s|--script=<filename>
 		--scriptoptions=<options>
-	-m|--message=<syslog message>
-	--ce=<CE number>
+	-s|<syslog message>
 	--put=<filename|dirname>
 	--logdir=<log directory>
 	-e|--rsh=<rsh|ssh>
@@ -429,11 +423,6 @@ a shell script, or a binary executable.
 user.errfacility/level. It is strongly recommended to put here a CE or WR 
 number.
 	!!! This field is mandatory !!!
-
-=item B<--ce>=I<Calendar Event>
-	
-	Serial number of the planned intervention. Put here a Calendar Event or Work
-Request number. It will be prepended in the logged message on the target syslog.
 
 =item B<--put>=I<filename>
 
