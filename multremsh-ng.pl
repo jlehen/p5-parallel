@@ -37,7 +37,6 @@ my $ping=1;
 my $semaphore_nb = 1; 
 my $verbose = 0;
 my $logdir;
-my $dontexec;
 my $rsh='ssh';
 my %rcp_commands = ( 'rsh' => 'rcp',
 			 'remsh' => 'rcp',
@@ -66,7 +65,6 @@ GetOptions(
 	   'logdir=s' => \$logdir,
 	   'help|man|h' => \$man,
 	   'L' => \$runlocally,
-	   'N'=> \$dontexec,
 	   'ping!' => \$ping,
 	   'rsh|e=s' => \$rsh,
 	   'spawn=i' => \$semaphore_nb,
@@ -129,8 +127,6 @@ if ($listemachine) {
 	}
 	}
 }
-
-exit if defined($dontexec);
 
 ## args checks
 if ($scriptfile) {
