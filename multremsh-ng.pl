@@ -32,7 +32,6 @@ my $scriptoptions;
 my @hostlist;
 my $hostlistref=\@hostlist;
 my @putfiles;
-my $man;
 my $ping=1;
 my $semaphore_nb = 1; 
 my $verbose = 0;
@@ -63,7 +62,6 @@ GetOptions(
 	   's=s' => \$syslogmsg,
 	   'put=s' => \@putfiles,
 	   'logdir=s' => \$logdir,
-	   'help|man|h' => \$man,
 	   'L' => \$runlocally,
 	   'ping!' => \$ping,
 	   'rsh|e=s' => \$rsh,
@@ -73,11 +71,6 @@ GetOptions(
 	   'keyfile=s' => \$ssh_keyfile,
 	   'verbose|v' => \$verbose,
 	   ) or (die $!);
-
-if ($man) { 
-	pod2usage(-verbose=>2) ;
-	exit(0);
-}
 
 if (($_o_timeout) && ($_o_timeout > 119)) {
 	$timeout=$_o_timeout;
@@ -378,7 +371,6 @@ Options:
 	--logdir=<log directory>
 	-e|--rsh=<rsh|ssh>
 	--spawn=<nthreads>
-	-h|--help|--man
 	-L
 	-N 
 	--timeout=<timeout>					time to wait for command execution in seconds
@@ -431,10 +423,6 @@ use several --put options to build a list of files/directories.
 
 	Specify a log directory in which to put target logs. One file per target.
 Log Filename is the hostname of the target.
-
-=item B<-h>, B<--help>, B<--man>
-
-	Prints this help
 
 =item B<-L>
 
