@@ -8,7 +8,6 @@
 
 use strict;
 use Getopt::Long;
-use Pod::Usage;
 use File::Basename;
 use POSIX qw(strftime mkdir);
 use IO::Pipe;
@@ -26,13 +25,10 @@ use Job::Timed;
 # Initialisation and default values
 my $VERSION='$Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $';
 my $logger_pri='user.err';
-my $listemachine; 
-my $scriptfile;
-my $scriptoptions;
-my @hostlist;
-my $hostlistref=\@hostlist;
+my @commands;
+my @hosts;
 my @putfiles;
-my $ping=1;
+my $ping=0;
 my $semaphore_nb = 1; 
 my $verbose = 0;
 my $logdir;
@@ -48,18 +44,24 @@ my $runlocally;
 my ($_o_timeout, $timeout);
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
+my $sep = "on";
 
 # autoflush
 $|=1;
 
+my $os;
+my $pingcmd;
+
+$os = `uname -s`;
+chomp $os;
+$pingcmd = 'ping -c 1';
+if ($os eq 'SunOS') { $pingcmd = 'ping' }
+
 # Command line options parsing
-Getopt::Long::Configure ('gnu_getopt');
+Getopt::Long::Configure qw(posix_default require_order bundling no_ignore_case);
 GetOptions(
-	   'target|t=s' => \@hostlist,
-	   'liste|l=s' => \$listemachine,
-	   'script|s=s' => \$scriptfile,
-		 'scriptoptions=s' => \$scriptoptions,
-	   's=s' => \$syslogmsg,
+	   'S=s' => \$sep,
+	   'm=s' => \$syslogmsg,
 	   'put=s' => \@putfiles,
 	   'logdir=s' => \$logdir,
 	   'L' => \$runlocally,
@@ -72,6 +74,19 @@ GetOptions(
 	   'verbose|v' => \$verbose,
 	   ) or (die $!);
 
+
+while (1) {
+	my $arg = shift @ARGV;
+	if (not defined $arg) { last }
+	if ($arg eq $sep) { last }
+	push @commands, $arg;
+}
+while (1) {
+	my $arg = shift @ARGV;
+	if (not defined $arg) { last }
+	push @hosts, $arg;
+}
+
 if (($_o_timeout) && ($_o_timeout > 119)) {
 	$timeout=$_o_timeout;
 }
@@ -81,12 +96,6 @@ else {
 
 if ($runlocally and @putfiles) {
 	die "No need to push files when run locally";
-}
-
-if ((!$listemachine && !@hostlist) || !$scriptfile) {
-	print "Some things misssing\n";
-	pod2usage(1);
-	exit(0);
 }
 
 my $rcp = $rcp_commands{$rsh};
@@ -109,62 +118,52 @@ if ($logdir && !-d $logdir) {
 # remove black lines and comments (#)
 ###############################################
 
-if ($listemachine) {
-	open LISTE, "<$listemachine" or die "Could not open machine list file $listemachine for reading\n";
-	while (<LISTE>) {
-	s/#.*$//;
-	chomp;
-	s/\s+//g;
-	if (/\S+/){
-		push @hostlist, $_;
-	}
-	}
-}
-
-## args checks
-if ($scriptfile) {
-	$scriptfile =~ /\.\./ and die "script file name contains illegal '..'";
-	#$scriptfile =~ / / and die "script file name contains illegal ' '";
-}
 if(@putfiles) {
 	grep (/\.\./, @putfiles) and die "Argument putfiles contains illegal '..'";
 	grep (/\s+/, @putfiles) and die "Argument putfiles contains illegal ' '";
 	
 }
 $semaphore_nb=($semaphore_nb>$thread_max?50:$semaphore_nb);
-my $scriptname;
-if (not $runlocally) {
-  $scriptname = basename($scriptfile).rand(100000);
-} else {
-  $scriptname = $scriptfile;
-}
 &logverbose('',"== Thread number=$semaphore_nb");
 
 
 #############################
 # Sub routine to print logs
 #############################
+
 sub printlog {
-	my ($verboselog, $tag, @text) = @_;
-	my $now_string = strftime("[%a %b %e %H:%M:%S %Y]", localtime);
+	my ($verboselog, $tag, $text) = @_;
+	my $now = strftime("[%Y/%m/%d_%H:%M:%S]", localtime);
 	if (!$verboselog || $verbose) {
-		print $now_string," ($tag) ",@text,"\n";
+		print "$now ($tag) $text\n";
 	}
 	if (defined $loghandle) {
-		print $loghandle $now_string, @text,"\n";
+		print $loghandle "$now $text\n";
 	}
 }
 
 sub logerror {
-	printlog(0, @_);
+	my ($tag, $text) = @_;
+
+	printlog(0, $tag, ">>> ERROR: $text");
+}
+
+sub logoutput {
+	my ($tag, $text) = @_;
+
+	printlog(0, $tag, $text);
 }
 
 sub lognormal {
-	printlog(0, @_);
+	my ($tag, $text) = @_;
+
+	printlog(0, $tag, ">>> $text");
 }
 
 sub logverbose {
-	printlog(1, @_);
+	my ($tag, $text) = @_;
+
+	printlog(1, $tag, ">>>>> $text");
 }
 
 #############################
@@ -183,7 +182,7 @@ sub pipedrun {
 	my $pipe = new IO::Pipe;
 	my $pid = fork;
 	if (not defined $pid) {
-		&logerror($slaveid, "== Can't execute command: (fork) $!");
+		logerror($slaveid, "Can't execute command: fork: $!");
 		return 300;
 	}
 	if ($pid == 0) {
@@ -191,26 +190,26 @@ sub pipedrun {
 		# Set pipe as stdout.
 		my $stdout = \*STDOUT;
 		if (not defined $stdout->fdopen($pipe->fileno, 'w')) {
-			&logerror($slaveid, "== Can't execute command: (fdopen) $!");
+			logerror($slaveid, "Can't execute command: fdopen: $!");
 			exit 127;
 		}
 		# Shutdown a warning from Perl: it yells when something else
 		# than "exit" is called after "exec".
 		no warnings;
 		exec $command;
-		&logerror($slaveid, "== Can't execute command: (exec) $!");
+		logerror($slaveid, "Can't execute command: exec: $!");
 		exit 127;
 	}
 	$pipe->reader();
 	while (<$pipe>) {
 		chomp;
-		&lognormal($slaveid, $_);
+		logoutput($slaveid, $_);
 	}
 	$pipe->close;
 	waitpid $pid, 0;
 	my $status = $?;
 	if ($status & 127) {
-		&logerror($slaveid, "== Command killed with signal ".($status & 127));
+		logerror($slaveid, "Command killed with signal ".($status & 127));
 		return 301;
 	}
 	return ($status >> 8);
@@ -218,14 +217,18 @@ sub pipedrun {
 
 
 sub timedrun {
-	my ($timer,$command,$slaveid)=@_;
+	my ($timer, $command, $slaveid) = @_;
+	my ($start, $end);
 
-	&logverbose($slaveid, "== Running $timer $command");
+	logverbose($slaveid, "Begin time-bound run (max ${timer}s): $command");
+	$start = time;
 	my $status = &Job::Timed::runSubr($timer, \&pipedrun, @_);
 	if (not defined $status) {
-		&logverbose($slaveid, "== Job::Timed::runSubr: ".&Job::Timed::error());
+		logverbose($slaveid, "Job::Timed::runSubr: ".&Job::Timed::error());
 		return 400;
 	}
+	$end = time;
+	logverbose($slaveid, "End time-bound run (lasted ".($end - $start)."s): $command");
 	return $status;
 }
 
@@ -247,76 +250,74 @@ sub stamp_ce {
 # send script to the host, then execute it.
 ###############################################
 
-sub traite {
-	my ($slaveid, $jobid, $host, $jobmax) = @_;
+sub escape {
+	my ($s) = @_;
+
+	$s =~ s/'/'\\''/g;
+	$s = "'$s'";
+	return $s;
+}
+
+
+sub dojob {
+	my ($slaveid, $jobid, $job, $jobmax) = @_;
+	my ($host, $command, $push) = ($job->{'host'}, $job->{'command'}, $job->{'push'});
 	my $status;
+	my $remotecommand;
 
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
 
-	if ($logdir) {
-		if (not defined open $loghandle, ">>$logdir/$host") {
-			&logerror($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
-		} else {
-			# Shared among multiple process, so disable buffering.
-			$loghandle->autoflush;
-		}
+	#if ($logdir) {
+	#	if (not defined open $loghandle, ">>$logdir/$host") {
+	#		&logerror($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
+	#	} else {
+	#		# Shared among multiple process, so disable buffering.
+	#		$loghandle->autoflush;
+	#	}
+	#}
+
+	if (not $host) {
+		lognormal($slaveid, "(job:$jobid/$jobmax) local: $command");
+		$status = timedrun($timeout, $command, $slaveid);
+		goto OUT;
 	}
 
-	&lognormal($slaveid, "============= $host ($jobid/$jobmax)");
+	lognormal($slaveid, "(job:$jobid/$jobmax) \@$host: $command");
 	if ($ping) {
-		if (&timedrun(5, "ping -c 1 $host >/dev/null 2>&1", $slaveid)) {
-			&logerror($slaveid, "== ERROR: Cannot ping '$host'");
+		if (timedrun(5, "$pingcmd $host >/dev/null 2>&1", $slaveid)) {
+			logerror($slaveid, "Cannot ping '$host'");
 			$status = 500;
 			goto OUT;
 		}
 	}
 
-	if ($runlocally) {
-		$status = &timedrun($timeout, "chmod +x $scriptname && $scriptname $scriptoptions $host", $slaveid);
-		if ($status) {
-				&logerror($slaveid, "== ERROR: Script returned a non-zero status $status");
-		}
-		goto OUT;
-	}
-
-	$status = &stamp_ce($host, "BEGIN", $slaveid);
-	if ($status) {
-		&logerror($slaveid, "== ERROR: Can't connect to host '$host'");
-		$status = 505;
-		goto OUT;
-	}
-
-	if (@putfiles) {
-		&logverbose($slaveid, "== Uploading ",join(' ', @putfiles)," to $host:/tmp/");
-
-		foreach my $putfile (@putfiles) {
-			$status = &timedrun(60, "$rcp -r $putfile ".$ssh_user."@".$host.":/tmp/",$slaveid);
-			if ($status) {
-				&logerror($slaveid, "== ERROR: Failed to push '$putfile' on host '$host'");
-			}
+	if ($push) {
+		# This doesn't support script names with spaces in it, enclosed in quotes.
+		# But anyway, which fool would use such a thing?
+		$command =~ m/^(\S+)/;
+		my $localscript = $1;
+		my $remotescript = $localscript;
+		$remotescript =~ s{.*/}{};
+		$remotescript = "/var/tmp/$remotescript".rand(10000);
+		lognormal($slaveid, "Pushing '$localscript' to $host as '$remotescript'");
+		if (timedrun(30, "$rcp $localscript $ssh_user\@$host:$remotescript", $slaveid)) {
+			logerror($slaveid, "Cannot push '$localscript' to $host");
 			goto OUT;
 		}
+		$command =~ s/^\S+//;
+		$command = "chmod +x $remotescript; $remotescript $command; rm -f $remotescript";
 	}
 
-	&logverbose($slaveid, "== Uploading $scriptfile to $host:/tmp/");
-	$status = &timedrun(60,"$rcp $scriptfile ".$ssh_user."@".$host.":/tmp/$scriptname",$slaveid);
+	$command = escape($command);
+	$status = timedrun($timeout, "$rsh $ssh_user\@$host $command 2>&1", $slaveid);
+	#print "$rsh $ssh_user\@$host $command 2>&1\n";
 	if ($status) {
-		&logerror($slaveid, "== ERROR: Failed to push '$scriptfile' on host '$host'");
+		logerror($slaveid, "Return status $status");
 		goto OUT;
-	}
-
-	$status = &timedrun($timeout,"$rsh ".$ssh_user."@".$host." 'cd /tmp && chmod +x $scriptname && ./$scriptname 2>&1'",$slaveid);
-
-	&stamp_ce($host, "END", $slaveid);
-	&timedrun(60,"$rsh ".$ssh_user."@".$host." 'cd /tmp && rm -f $scriptname'",$slaveid);
-
-	if ($status) {
-		&logerror($slaveid, "== ERROR: Script returned a non-zero status $status on host '$host'");
 	}
 
 OUT:
-	&logverbose($slaveid, "== End of thread");
-	if (defined $loghandle) { close $loghandle }
+	#if (defined $loghandle) { close $loghandle }
 	return $status;
 }
 
@@ -327,12 +328,46 @@ OUT:
 # threads are detached to be sure to free resources...
 ############################################################
 
+my @jobs;
+
+if (@hosts == 0) { push @hosts, '' }
+foreach my $host (@hosts) {
+	my $push = 0;
+	foreach my $command (@commands) {
+		my %args = ();
+
+		if ($command eq '+s') {
+			$push = 1;
+			next;
+		}
+		if ($push and not -f $command) { die "No such file: $command" }
+		$args{'host'} = $host;
+		$args{'command'} = $command;
+		$args{'push'} = $push;
+		$push = 0;
+		push @jobs, \%args;
+	}
+}
+
+foreach my $args (@jobs) {
+	if ($args->{'host'}) {
+		print '@'.$args->{'host'}.': ';
+	} else {
+		print 'locally: ';
+	}
+	if ($args->{'push'}) {
+		print 'push and run '.$args->{'command'}."\n";
+	} else {
+		print $args->{'command'}."\n";
+	}
+}
+
 $SIG{'INT'} = $SIG{'TERM'} = sub {
 	Job::Parallel::terminate();
 	if (!Job::Parallel::isChild()) { exit 0 }
 };
 
-Job::Parallel::run($semaphore_nb, \&traite, [ scalar @hostlist ], @hostlist);
+Job::Parallel::run($semaphore_nb, \&dojob, scalar @hosts, @jobs);
 
 
 #############################################################
@@ -362,8 +397,6 @@ __END__
 	./multremsh.pl [options]
 
 Options:
-	-t|--target=<hostname>		   target hostname, you can use this option multiple time for multiple targets
-	-l|--liste=<filename>					
 	-s|--script=<filename>
 		--scriptoptions=<options>
 	-s|<syslog message>
@@ -385,16 +418,6 @@ Exemples:
 =head1 OPTIONS
 
 =over
-=item B<-t> I<hostname>, B<--taget>=I<hostname>
-
-	Target hostname. You can repeat this options to build a list of hosts. 
-E.g.: --target=hosta -t hostb
-
-=item B<-l> I<filename>, B<--liste>=<filename>
-
-	name of a file containing a list of hostnames. Accepts one host per line. 
-# is considered a comment and blank lines are ignored.
-
 =item B<-s> I<filename>, B<--script>=<filename>
 	
 	Name of the file which will be sent on target:/tmp and executed. It can be 
