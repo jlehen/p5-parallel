@@ -25,17 +25,11 @@ use Job::Timed;
 # Initialisation and default values
 my $VERSION='$Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $';
 my $logger_pri='user.err';
-my @commands;
-my @hosts;
 my @putfiles;
 my $ping=0;
 my $semaphore_nb = 1; 
 my $verbose = 0;
 my $logdir;
-my $rsh='ssh';
-my %rcp_commands = ( 'rsh' => 'rcp',
-			 'remsh' => 'rcp',
-			 'ssh' => 'scp');
 my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
 my $syslogmsg;
 my $loghandle;
@@ -44,13 +38,15 @@ my $runlocally;
 my ($_o_timeout, $timeout);
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
-my $sep = "on";
+my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%HOST\%';
 
 # autoflush
 $|=1;
 
 my $os;
 my $pingcmd;
+my $sshcmd;
+my $scpcmd;
 
 $os = `uname -s`;
 chomp $os;
@@ -60,32 +56,16 @@ if ($os eq 'SunOS') { $pingcmd = 'ping' }
 # Command line options parsing
 Getopt::Long::Configure qw(posix_default require_order bundling no_ignore_case);
 GetOptions(
-	   'S=s' => \$sep,
 	   'm=s' => \$syslogmsg,
-	   'put=s' => \@putfiles,
 	   'logdir=s' => \$logdir,
-	   'L' => \$runlocally,
 	   'ping!' => \$ping,
-	   'rsh|e=s' => \$rsh,
 	   'spawn=i' => \$semaphore_nb,
 	   'timeout=i' => \$_o_timeout,
 	   'user=s' => \$ssh_user,
-	   'keyfile=s' => \$ssh_keyfile,
+	   'k=s' => \$ssh_keyfile,
 	   'verbose|v' => \$verbose,
 	   ) or (die $!);
 
-
-while (1) {
-	my $arg = shift @ARGV;
-	if (not defined $arg) { last }
-	if ($arg eq $sep) { last }
-	push @commands, $arg;
-}
-while (1) {
-	my $arg = shift @ARGV;
-	if (not defined $arg) { last }
-	push @hosts, $arg;
-}
 
 if (($_o_timeout) && ($_o_timeout > 119)) {
 	$timeout=$_o_timeout;
@@ -94,16 +74,9 @@ else {
 	$timeout=120;
 }
 
-if ($runlocally and @putfiles) {
-	die "No need to push files when run locally";
-}
-
-my $rcp = $rcp_commands{$rsh};
-if ($rsh eq 'ssh') {
-	if($ssh_keyfile) {$ssh_opts .= ' -i '.$ssh_keyfile;}
-	$rsh = $rsh . ' ' . $ssh_opts;
-	$rcp = $rcp . ' ' . $ssh_opts;
-}
+if($ssh_keyfile) {$ssh_opts .= ' -i '.$ssh_keyfile;}
+$sshcmd = "ssh $ssh_opts";
+$scpcmd = "scp $ssh_opts";
 
 ###############################################
 # Check log directory or create it
@@ -117,15 +90,6 @@ if ($logdir && !-d $logdir) {
 # Parse machine list file
 # remove black lines and comments (#)
 ###############################################
-
-if(@putfiles) {
-	grep (/\.\./, @putfiles) and die "Argument putfiles contains illegal '..'";
-	grep (/\s+/, @putfiles) and die "Argument putfiles contains illegal ' '";
-	
-}
-$semaphore_nb=($semaphore_nb>$thread_max?50:$semaphore_nb);
-&logverbose('',"== Thread number=$semaphore_nb");
-
 
 #############################
 # Sub routine to print logs
@@ -210,7 +174,7 @@ sub pipedrun {
 	my $status = $?;
 	if ($status & 127) {
 		logerror($slaveid, "Command killed with signal ".($status & 127));
-		return 301;
+		return -1;
 	}
 	return ($status >> 8);
 }
@@ -225,31 +189,17 @@ sub timedrun {
 	my $status = &Job::Timed::runSubr($timer, \&pipedrun, @_);
 	if (not defined $status) {
 		logverbose($slaveid, "Job::Timed::runSubr: ".&Job::Timed::error());
-		return 400;
+		return -2;
 	}
+	if ($status < 0) { return $status }
+
 	$end = time;
-	logverbose($slaveid, "End time-bound run (lasted ".($end - $start)."s): $command");
+	logverbose($slaveid, "End time-bound run (lasted ".($end - $start)."s) with status $status: $command");
 	return $status;
 }
 
-#############################
-# Print BEGIN/END message on remote host
-# - Argument 0/1 means begin/end
-#############################
-sub stamp_ce {
-	my ($host, $stamp, $slaveid)=@_;
-	return 0 if (not defined $syslogmsg);
-	my $retval=&timedrun(30,"$rsh ".$ssh_user."@".$host." 'logger -p $logger_pri \"$syslogmsg $stamp\"'",$slaveid);
-	return $retval;
-}
 
-
-###############################################
-# Threaded routine
-# Check host availability
-# send script to the host, then execute it.
-###############################################
-
+# Enclose a command in single quotes.
 sub escape {
 	my ($s) = @_;
 
@@ -259,11 +209,17 @@ sub escape {
 }
 
 
+# If 'host' is false, then this is a local job.
+#
+#
 sub dojob {
 	my ($slaveid, $jobid, $job, $jobmax) = @_;
-	my ($host, $command, $push) = ($job->{'host'}, $job->{'command'}, $job->{'push'});
+	my $action = $job->{'action'};
+	my $command = $job->{'command'};
+	my $host = $job->{'host'};
+	my $dir = $job->{'dir'};
+	my ($push, $exec);
 	my $status;
-	my $remotecommand;
 
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
 
@@ -277,43 +233,53 @@ sub dojob {
 	#}
 
 	if (not $host) {
-		lognormal($slaveid, "(job:$jobid/$jobmax) local: $command");
+		# Sanity checks after the parser ensured that the action is 'exec'.
+		lognormal($slaveid, "(job:$jobid/$jobmax) exec local: $command");
 		$status = timedrun($timeout, $command, $slaveid);
 		goto OUT;
 	}
 
-	lognormal($slaveid, "(job:$jobid/$jobmax) \@$host: $command");
+	lognormal($slaveid, "(job:$jobid/$jobmax) \@$host: $action $command");
 	if ($ping) {
-		if (timedrun(5, "$pingcmd $host >/dev/null 2>&1", $slaveid)) {
+		$status = timedrun(5, "$pingcmd $host >/dev/null 2>&1", $slaveid);
+		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
-			$status = 500;
 			goto OUT;
 		}
 	}
 
-	if ($push) {
+	$dir =~ s{/$}{};
+	if ($action eq 'push' or $action eq 'pushnexec') {
 		# This doesn't support script names with spaces in it, enclosed in quotes.
 		# But anyway, which fool would use such a thing?
 		$command =~ m/^(\S+)/;
-		my $localscript = $1;
-		my $remotescript = $localscript;
-		$remotescript =~ s{.*/}{};
-		$remotescript = "/var/tmp/$remotescript".rand(10000);
-		lognormal($slaveid, "Pushing '$localscript' to $host as '$remotescript'");
-		if (timedrun(30, "$rcp $localscript $ssh_user\@$host:$remotescript", $slaveid)) {
-			logerror($slaveid, "Cannot push '$localscript' to $host");
+		my $localfile = $1;
+		my $remotefile = $localfile;
+		$remotefile =~ s{.*/}{};
+
+		if ($dir) {
+			$remotefile = "$dir/$remotefile";
+		} else {
+			$remotefile = "./$remotefile";
+		}
+		lognormal($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
+		$status = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid);
+		if ($status != 0) {
+			logerror($slaveid, "Cannot push '$localfile' to $host");
 			goto OUT;
 		}
+
+		if ($action eq 'push') { goto OUT }
+
+		# Only meaningful for 'pushnexec'.
 		$command =~ s/^\S+//;
-		$command = "chmod +x $remotescript; $remotescript $command; rm -f $remotescript";
+		$command = "chmod +x $remotefile; $remotefile $command; rm -f $remotefile";
 	}
 
 	$command = escape($command);
-	$status = timedrun($timeout, "$rsh $ssh_user\@$host $command 2>&1", $slaveid);
-	#print "$rsh $ssh_user\@$host $command 2>&1\n";
-	if ($status) {
+	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $command 2>&1", $slaveid);
+	if ($status > 0) {
 		logerror($slaveid, "Return status $status");
-		goto OUT;
 	}
 
 OUT:
@@ -322,45 +288,170 @@ OUT:
 }
 
 
-############################################################
-#			  Actually do the work:
-# loop over machine list and start as many threads as needed
-# threads are detached to be sure to free resources...
-############################################################
+# =-=-=-=-=-=-=-=-=-=
+# Command-line parser
+# =-=-=-=-=-=-=-=-=-=
+#
+# Here is the deterministic finite state machine of the command-line grammar.
+# It is really to implement once you have this.
+#
+#                                                                    [host]<-+
+#      .->"push"-.             "in"-->S6-->[dir]-->S7-->"on"           |     |
+#     /           \             ^                        |             |  .--+
+#    |             v            |                        v             v /
+# ->S0---"exec"--->S1--[cmd]-->S2---------->"on"-------->S4--[host]---S5-->
+#    |             ^           /|                        ^
+#    |\           /|          v |                        |
+#    | "pushnexec" |            +->"locally"->S3-->"for"-+
+#     \           /                           |
+#      "readnexec"                            v
 
-my @jobs;
+use constant {
+	S0 => 0, S1 => 1, S2 => 2, S3 => 3,
+	S4 => 4, S5 => 5, S6 => 6, S7 => 7
+};
 
-if (@hosts == 0) { push @hosts, '' }
-foreach my $host (@hosts) {
-	my $push = 0;
-	foreach my $command (@commands) {
-		my %args = ();
+my @expected = (
+	[ 'push', 'exec', 'pushnexec', 'readnexec' ],	# S0
+	[ '<command>', '<file>' ],			# S1
+	[ 'on', 'locally', 'in' ],			# S2
+	[ 'for' ],					# S3
+	[ '<host>' ],					# S4
+	[ ],						# S5
+	[ '<dir>' ],					# S6
+	[ 'on' ]					# S7
+);
+my $i;
+my $state = S0;
+my ($action, $what, @hosts, $where, $dir);
 
-		if ($command eq '+s') {
-			$push = 1;
+for ($i = 0; $i < @ARGV; $i++) {
+	my $w = $ARGV[$i];
+
+	if ($state == S0) {
+		if ($w eq 'exec' or $w eq 'pushnexec' or $w eq 'readnexec' or
+		    $w eq 'push') {
+			$action = $w;
+			$state = S1;
 			next;
 		}
-		if ($push and not -f $command) { die "No such file: $command" }
-		$args{'host'} = $host;
-		$args{'command'} = $command;
-		$args{'push'} = $push;
-		$push = 0;
-		push @jobs, \%args;
+		die "Expecting ".join ('/', @{$expected[S0]})." at word $i ('$w')";
+	}
+	if ($state == S1) {
+		$what = $w;
+		$state = S2;
+		next;
+	}
+	if ($state == S2) {
+		if ($w eq "in") {
+			$where = 'remote';
+			$state = S6;
+			next;
+		}
+		if ($w eq 'on') {
+			$where = 'remote';
+			$state = S4;
+			next;
+		}
+		if ($w eq 'locally') {
+			$where = 'local';
+			$state = S3;
+			next;
+		}
+		die "Expecting ".join ('/', @{$expected[S2]})." at word $i ('$w')";
+	}
+	if ($state == S3) {
+		if ($w eq 'for') {
+			$state = S4;
+			next;
+		}
+		die "Expecting ".join ('/', @{$expected[S3]})." at word $i ('$w')";
+	}
+	if ($state == S4 or $state == S5) {
+		push @hosts, $w;
+		$state = S5;
+		next;
+	}
+	if ($state == S6) {
+		$dir = $w;
+		$state = S7;
+		next;
+	}
+	if ($state == S7) {
+		if ($w eq 'on') {
+			$state = S4;
+			next;
+		}
+		die "Expecting ".join ('/', @{$expected[S7]})." at word $i ('$w')";
 	}
 }
 
-foreach my $args (@jobs) {
-	if ($args->{'host'}) {
-		print '@'.$args->{'host'}.': ';
-	} else {
-		print 'locally: ';
+if ($state == S2) {
+	$where = 'local';
+	$state = S3;
+}
+if ($state != S3 and $state != S5) {
+	die "Expecting ".join ('/', @{$expected[$state]})." at word $i";
+}
+
+my @commands = ();
+if ($action eq 'readnexec') {
+	my $fh;
+	if (not open ($fh, '<', $what)) { die "$what: $!" }
+	while (<$fh>) {
+		chomp;
+		if (/^\s*$/) { next }	
+		if (/^\s\#/) { next }	
+		push @commands, $_;
 	}
-	if ($args->{'push'}) {
-		print 'push and run '.$args->{'command'}."\n";
-	} else {
-		print $args->{'command'}."\n";
+	$action = 'read';
+} else {
+	push @commands, $what;
+}
+
+my @jobs;
+if (@hosts > 0) {
+	my %job = ();
+
+	if ($where eq 'local') {	# Substitution
+		foreach my $cmd (@commands) {
+			foreach my $host (@hosts) {
+				my $job = {};
+				my $realcmd = $cmd;
+				$realcmd =~ s/$subst/$host/g;
+				$job->{'action'} = $action;
+				$job->{'command'} = $realcmd;
+				$job->{'host'} = '';
+				push @jobs, $job;
+			}
+		}
+	} else {			# 'remote', Combination
+		foreach my $cmd (@commands) {
+			foreach my $host (@hosts) {
+				my $job = {};
+				$job->{'action'} = $action;
+				$job->{'command'} = $cmd;
+				$job->{'host'} = $host;
+				$job->{'dir'} = $dir ? $dir : '';
+				push @jobs, $job;
+			}
+		}
+	}
+} else {
+	if ($where ne 'local') {
+		die 'ASSERTION FAILED: remote command with no hosts';
+	}
+	
+	foreach my $cmd (@commands) {
+		my $job = {};
+		$job->{'action'} = $action;
+		$job->{'command'} = $cmd;
+		$job->{'host'} = '';
+		push @jobs, $job;
 	}
 }
+
+use Data::Dumper; print Dumper(\@jobs)."\n";
 
 $SIG{'INT'} = $SIG{'TERM'} = sub {
 	Job::Parallel::terminate();
