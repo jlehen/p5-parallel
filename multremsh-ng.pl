@@ -1,15 +1,161 @@
 #!/usr/bin/perl -w
 #
-# 2008-2009 Jeremie Le Hen <jeremie.le-hen@sgcib.com>
+# 2008-2010 Jeremie Le Hen <jeremie.le-hen@sgcib.com>
 #
 # Based on multremsh.pl:
 # 2004 Vincent Haverlant <vincent.haverlant@sgcib.com> 
 # $Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $
 
+sub usage {
+	my $me = $0;
+
+	$me =~ s{.*/}{};
+	print <<EOF;
+Usage:
+- Detailled informations on each command:
+  $me help <'push'|'exec'|'pushnexec'|'readnexec'>
+
+- Remote commands:
+  $me [options] push <file> [in <dir>] on <host> [host ...]
+  $me [options] exec <command> [in <dir>] on <host> [host ...]
+  $me [options] pushnexec <command> [in <dir>] on <host> [host ...]
+  $me [options] readnexec <file> [in <dir>] on <host> [host ...]
+
+- Local commands:
+  $me [options] exec <command> locally [for <host> [host ...]]
+  $me [options] readnexec <file> locally [for <arg> [arg ...]]
+
+- Common options:
+  -l <logdir>	Logs everything in <logdir>/
+  -n <number>	Number of commands to run simultaneously, default: 1
+  -q		Be quiet, that is don't issue command output on terminal
+  -t <seconds>	Timeout when running a command, default: 120
+  -v		Be verbose on terminal
+
+- Remote command options:
+  -k <keyfile>	Use <keyfile> when using ssh
+  -p <seconds>	Ping timeout when testing host, disable with 0, default: 5
+  -u <user>	Use <user> when using ssh, default: \$LOGNAME
+
+- Local command options:
+  -s <string>	Substitute <string> for each host, default: %ARG%
+
+EOF
+	exit 0;
+}
+
+sub help_push {
+	my $me = $0;
+
+	$me =~ s{.*/}{};
+	print <<EOF;
+Synopsys:
+  $me push <file> [in <dir>] on <host> [host ...]
+
+Description:
+  The ``push'' command will just transfer <file> on each <host>, optionally
+  in the specified <dir>.  If no <dir> is specifed, the user's home
+  directory is used.
+
+  This command is only meaningful in a remote context.  Pushing files
+  locally is useless.
+
+Examples:
+  $me -n 2 push 119744-11.gz in /var/tmp on host1 host2
+
+  cat hosts.txt | xargs $me -n 10 push /etc/resolv.conf in /etc on
+
+EOF
+	exit 0;
+}
+
+sub help_exec {
+	my $me = $0;
+
+	$me =~ s{.*/}{};
+	print <<EOF;
+Synopsys:
+  Remote: $me exec <command> [in <dir>] on <host> [host ...]
+  Local: $me exec <command> locally for <arg> [arg ...]
+
+Description:
+  When used in its remote version, the ``exec'' command will execute <command>
+  on each <host>, optionally from the specified <dir>.  <command> may be a
+  full-fledged shell command, including pipes, quotes and even scripting.  Just
+  be careful to enclose it in quotes, so it is considered as a single argument.
+  If no <dir> is specifed, the user's home directory is used.
+
+  When used in its local version, the ``exec'' command will execute <command>
+  for each <arg>.  <command> may be a full-fledged shell command, including
+  pipes, quotes and even scripting.  Just be careful to enclose it in quotes,
+  so it is considered as a single argument.  Every %ARG% string in the
+  command will be replaced by the current <arg>.  This string can be changed
+  with the -s option.
+
+Examples:
+  $me -n 2 exec "uname -s" on host1 host2 host3 host4
+
+  $me -n 2 exec "grep ^%ARG%: /etc:passwd" locally for root jlehen
+
+EOF
+	exit 0;
+}
+
+sub help_pushnexec {
+	my $me = $0;
+
+	$me =~ s{.*/}{};
+	print <<EOF;
+Synopsys:
+  $me pushnexec <file> [in <dir>] on <host> [host ...]
+
+Description:
+  The ``pushnexec'' command is a combination of the ``push'' and ``exec''
+  commands (incredible, isn't it?).  <command> can include arguments, in
+  which case only first word will be pushed.  Note that the pushed file
+  will be set executable before being executed and will be removed after
+  the execution.
+
+  This command is only meaningful in a remote context.  Pushing files
+  locally is useless.
+
+Examples:
+  $me pushnexec "./doit.sh --yes --force" on host1 host2
+
+EOF
+	exit 0;
+}
+
+sub help_readnexec {
+	my $me = $0;
+
+	$me =~ s{.*/}{};
+	print <<EOF;
+Synopsys:
+  Remote: $me readnexec <file> [in <dir>] on <host> [host ...]
+  Local: $me readnexec <file> locally for <arg> [arg ...]
+
+Description:
+  The ``readnexec'' command is very similar to the ``exec'' command, except
+  that it reads <file> to know which commands to execute on each <host> or
+  for each <arg>.  Note that empty lines and lines beginning with # are
+  skipped.
+
+Examples:
+  echo "logger Update server." >> commands.txt
+  echo "yum update" >> commands.txt
+  echo "shutdown -r 'Update finished, rebooing'" >> commands.txt
+  cat linuxhosts.txt | xargs $me readnexec commands.txt on
+
+EOF
+	exit 0;
+}
+
+
 use strict;
 use Getopt::Long;
 use File::Basename;
-use POSIX qw(strftime mkdir);
+use POSIX qw(strftime mkdir :sys_wait_h);
 use IO::Pipe;
 
 my $dirname;
@@ -25,97 +171,71 @@ use Job::Timed;
 # Initialisation and default values
 my $VERSION='$Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $';
 my $logger_pri='user.err';
-my @putfiles;
-my $ping=0;
-my $semaphore_nb = 1; 
+my $pingtimeout = 5;
+my $parallelism = 1; 
 my $verbose = 0;
-my $logdir;
-my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
+my $quiet = 0;
 my $syslogmsg;
-my $loghandle;
-my $thread_max=50;
-my $runlocally;
-my ($_o_timeout, $timeout);
+my $timeout = 120;
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
-my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%HOST\%';
-
-# autoflush
-$|=1;
-
+my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
+my $logdir = '';
+my $loghandle;
+my $outhandle;
+my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
 my $os;
 my $pingcmd;
 my $sshcmd;
 my $scpcmd;
+
+$|=1;
+
+Getopt::Long::Configure qw(posix_default require_order bundling no_ignore_case);
+GetOptions(
+	'm=s' => \$syslogmsg,
+	'l=s' => \$logdir,
+	'p=i' => \$pingtimeout,
+	'n=i' => \$parallelism,
+	't=i' => \$timeout,
+	'u=s' => \$ssh_user,
+	'k=s' => \$ssh_keyfile,
+	'v' => \$verbose,
+	's=s' => \$subst,
+	'q' => \$quiet,
+	'h' => \&usage,
+) or (die $!);
 
 $os = `uname -s`;
 chomp $os;
 $pingcmd = 'ping -c 1';
 if ($os eq 'SunOS') { $pingcmd = 'ping' }
 
-# Command line options parsing
-Getopt::Long::Configure qw(posix_default require_order bundling no_ignore_case);
-GetOptions(
-	   'm=s' => \$syslogmsg,
-	   'logdir=s' => \$logdir,
-	   'ping!' => \$ping,
-	   'spawn=i' => \$semaphore_nb,
-	   'timeout=i' => \$_o_timeout,
-	   'user=s' => \$ssh_user,
-	   'k=s' => \$ssh_keyfile,
-	   'verbose|v' => \$verbose,
-	   ) or (die $!);
-
-
-if (($_o_timeout) && ($_o_timeout > 119)) {
-	$timeout=$_o_timeout;
-}
-else {
-	$timeout=120;
-}
-
-if($ssh_keyfile) {$ssh_opts .= ' -i '.$ssh_keyfile;}
+if ($ssh_keyfile) { $ssh_opts .= ' -i '.$ssh_keyfile }
 $sshcmd = "ssh $ssh_opts";
 $scpcmd = "scp $ssh_opts";
 
-###############################################
-# Check log directory or create it
-###############################################
-
-if ($logdir && !-d $logdir) {
-	mkdir $logdir,0700;
+if ($logdir and not -d $logdir) {
+	mkdir $logdir, 0700;
 }
 
-###############################################
-# Parse machine list file
-# remove black lines and comments (#)
-###############################################
-
-#############################
-# Sub routine to print logs
-#############################
+# =-=-=-=-=-=-
+# Log routines
+# =-=-=-=-=-=-
 
 sub printlog {
-	my ($verboselog, $tag, $text) = @_;
+	my ($level, $tag, $text) = @_;
 	my $now = strftime("[%Y/%m/%d_%H:%M:%S]", localtime);
-	if (!$verboselog || $verbose) {
+	if ($verbose or ($quiet and $level < 1) or (not $quiet and $level < 2)) {
 		print "$now ($tag) $text\n";
 	}
-	if (defined $loghandle) {
-		print $loghandle "$now $text\n";
-	}
+	if (defined $loghandle) { print $loghandle "$now ($tag) $text\n" }
 }
 
 sub logerror {
 	my ($tag, $text) = @_;
 
-	printlog(0, $tag, ">>> ERROR: $text");
-}
-
-sub logoutput {
-	my ($tag, $text) = @_;
-
-	printlog(0, $tag, $text);
+	printlog(-1, $tag, ">>> ERROR: $text");
 }
 
 sub lognormal {
@@ -124,15 +244,22 @@ sub lognormal {
 	printlog(0, $tag, ">>> $text");
 }
 
+sub logoutput {
+	my ($tag, $text) = @_;
+
+	if (defined $outhandle) { print $outhandle "$text\n" }
+	printlog(1, $tag, $text);
+}
+
 sub logverbose {
 	my ($tag, $text) = @_;
 
-	printlog(1, $tag, ">>>>> $text");
+	printlog(2, $tag, ">>>>> $text");
 }
 
-#############################
-# Routine d'execution
-#############################
+# =-=-=-=-=-=-=
+# Core routines
+# =-=-=-=-=-=-=
 
 #
 # This function creates a pipe, forks and sets it as stdout before running the
@@ -170,7 +297,9 @@ sub pipedrun {
 		logoutput($slaveid, $_);
 	}
 	$pipe->close;
-	waitpid $pid, 0;
+	while (1) {
+		if (waitpid -1, 0 == -1) { last }
+	}
 	my $status = $?;
 	if ($status & 127) {
 		logerror($slaveid, "Command killed with signal ".($status & 127));
@@ -220,34 +349,48 @@ sub dojob {
 	my $dir = $job->{'dir'};
 	my ($push, $exec);
 	my $status;
+	my $realcommand;
 
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
 
-	#if ($logdir) {
-	#	if (not defined open $loghandle, ">>$logdir/$host") {
-	#		&logerror($slaveid, "== WARNING: Cannot open '$logdir/$host' for writing: $!");
-	#	} else {
-	#		# Shared among multiple process, so disable buffering.
-	#		$loghandle->autoflush;
-	#	}
-	#}
+	if ($logdir) {
+		my $logfile = $host ? $host : $jobid;
 
+		if (not open $loghandle, '>>', "$logdir/$logfile.log") {
+			logerror($slaveid, "Cannot open '$logdir/$host' for writing: $!");
+			goto OUT;
+		}
+		if (not open $outhandle, '>>', "$logdir/$logfile.out") {
+			logerror($slaveid, "Cannot open '$logdir/$host' for writing: $!");
+			goto OUT;
+		}
+		# Shared among multiple process, so disable buffering.
+		$loghandle->autoflush(1);
+		$outhandle->autoflush(1);
+	}
+
+	# Local run is straightforward.
 	if (not $host) {
 		# Sanity checks after the parser ensured that the action is 'exec'.
 		lognormal($slaveid, "(job:$jobid/$jobmax) exec local: $command");
+		if (defined $outhandle) {
+			print $outhandle "# exec local: $command\n";
+		}
 		$status = timedrun($timeout, $command, $slaveid);
 		goto OUT;
 	}
 
-	lognormal($slaveid, "(job:$jobid/$jobmax) \@$host: $action $command");
-	if ($ping) {
-		$status = timedrun(5, "$pingcmd $host >/dev/null 2>&1", $slaveid);
+	lognormal($slaveid, "(job:$jobid/$jobmax) $action \@$host: $command");
+	print $outhandle "# $action \@host: $command\n";
+	if ($pingtimeout > 0) {
+		$status = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
 			goto OUT;
 		}
 	}
 
+	$realcommand = $command;
 	$dir =~ s{/$}{};
 	if ($action eq 'push' or $action eq 'pushnexec') {
 		# This doesn't support script names with spaces in it, enclosed in quotes.
@@ -272,18 +415,21 @@ sub dojob {
 		if ($action eq 'push') { goto OUT }
 
 		# Only meaningful for 'pushnexec'.
-		$command =~ s/^\S+//;
-		$command = "chmod +x $remotefile; $remotefile $command; rm -f $remotefile";
+		$realcommand =~ s/^\S+//;
+		$realcommand = "chmod +x $remotefile; $remotefile $realcommand; rm -f $remotefile";
 	}
 
-	$command = escape($command);
-	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $command 2>&1", $slaveid);
+	if ($dir) { $realcommand = "cd $dir; $realcommand" }
+
+	$realcommand = escape($realcommand);
+	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand 2>&1", $slaveid);
 	if ($status > 0) {
 		logerror($slaveid, "Return status $status");
 	}
 
 OUT:
-	#if (defined $loghandle) { close $loghandle }
+	if (defined $loghandle) { close $loghandle }
+	if (defined $outhandle) { close $outhandle }
 	return $status;
 }
 
@@ -324,6 +470,15 @@ my @expected = (
 my $i;
 my $state = S0;
 my ($action, $what, @hosts, $where, $dir);
+
+if ($ARGV[0] eq 'help') {
+	if ($ARGV[1] eq 'exec') { help_exec() }
+	if ($ARGV[1] eq 'push') { help_push() }
+	if ($ARGV[1] eq 'pushnexec') { help_pushnexec() }
+	if ($ARGV[1] eq 'readnexec') { help_readnexec() }
+	print STDERR "ERROR: Unexpected '$ARGV[1]'\n";
+	usage();
+}
 
 for ($i = 0; $i < @ARGV; $i++) {
 	my $w = $ARGV[$i];
@@ -458,152 +613,4 @@ $SIG{'INT'} = $SIG{'TERM'} = sub {
 	if (!Job::Parallel::isChild()) { exit 0 }
 };
 
-Job::Parallel::run($semaphore_nb, \&dojob, scalar @hosts, @jobs);
-
-
-#############################################################
-# _______________
-#< Documentation >
-# ---------------
-#   \
-#	\
-#		.--.
-#	   |o_o |
-#	   |:_/ |
-#	  //   \ \
-#	 (|	 | )
-#	/'\_   _/`\
-#	\___)=(___/
-#############################################################
-
-
-__END__
-
-=head1 NAME
-
-	mulremsh.pl - Run a given script on many hosts at the same time.
-
-=head1 SYNOPSIS
-
-	./multremsh.pl [options]
-
-Options:
-	-s|--script=<filename>
-		--scriptoptions=<options>
-	-s|<syslog message>
-	--put=<filename|dirname>
-	--logdir=<log directory>
-	-e|--rsh=<rsh|ssh>
-	--spawn=<nthreads>
-	-L
-	-N 
-	--timeout=<timeout>					time to wait for command execution in seconds
-	--user=<ssh username>		   Username used to make ssh connections
-	--keyfile=<ssh private key file>		Private key used to make ssh connections
-
-Exemples:
-	./multremsh.pl --spawn=10 -e ssh --logdir=logs/ -m "REL 162663: install jrockit 1.4.2_13" -t gigaprod05 \
-				   -t gigaprod06 -t pnlgui001 -t pnlgui002 -s scripts/Linux.jrockit-jdk1.4.2_12.sh \
-				   --put=scripts/Linux.jrockit-jdk1.4.2_12.tar.gz
-
-=head1 OPTIONS
-
-=over
-=item B<-s> I<filename>, B<--script>=<filename>
-	
-	Name of the file which will be sent on target:/tmp and executed. It can be 
-a shell script, or a binary executable.
-
-=item B<--scriptoptions>=<options>
-
-		Options to give to the called script, must be formatted with double-quotes (ex. : "-c config.ini").
-		Will be empty by default.
-
-=item B<-m> I<syslog message>, B<--message>=I<syslog message>
-	
-	Type in a message that will be issued on the target via logger using 
-user.errfacility/level. It is strongly recommended to put here a CE or WR 
-number.
-	!!! This field is mandatory !!!
-
-=item B<--put>=I<filename>
-
-	Files to be put in /tmp on destination host. Transfer is done using either
-rcp -r or scp -r so it works for directories. Any trainling / is stipped from
-the argument to avoid undocumented copy troubles in case of directories. You can
-use several --put options to build a list of files/directories.
-
-=item B<--logdir>=I<log directory>
-
-	Specify a log directory in which to put target logs. One file per target.
-Log Filename is the hostname of the target.
-
-=item B<-L>
-
-	Run the script locally with a server (-t) or a list of server (-l) in
-argument.
-
-=item B<-N>
-
-	Simulates action but does not send files nor executes remote commands
-
-=item B<-M>
-
-	Prepends the target hostname in the log messages
-
-
-=head1 POWER USER OPTIONS !!! USE WITH CARE !!!
-
-=item B<-e> I<[rsh|ssh|remsh]>, B<--rsh>=I<[rsh|ssh|remsh]>
-	
-	Uses the specified remode command type
-
-=item B<--spawn>=I<number>
-
-	Number of parallel threads to spawn. !!! USE WITH CARE !!! There is a risk
-of resource starvation due to the way rsh works. In any case it is not
-considered safe to spawn more than 15 simultaneous threads.
-
-=item B<--timeout>=I<timeout>
-	
-	Use this option to override default timeout value in seconds to wait for good 
-command execution. Minimum value is 120 secs.  This option applies only to the script 
-execution time. All other actions (preparations, file copies etc...) retain their 
-default timers of 60s.
-
-=item B<--user>=I<ssh user>
-
-	Use this option to specify a username to make the ssh connections. 
-Default for this option is current username of the sessions ($LOGNAME)
-
-=item B<--keyfile>=I<ssh private key file>
-
-	Use this option to specify a private key file to use to make the ssh 
-connections. Default is to use the sonfigured values of the ssh tool for the ssh user.
-
-=head1 NOTES
-	
-	Here is a little recommandation on the use of this script. It is preferable
-to use the put option to put files on the remote host. It does not preserve file
-permissions so you should first perform a chmod +x on any script that you intend
-to call from the main script.
-
-	Take care that the main script really exits. It is often a good idea to use
-nohup subscript.sh & if there is a risk that you script will spawn processes
-that you do not know of and thus will block the rsh. This can happen on linux
-when restarting init.d services: /etc/init.d/ftpd restart for example.
-
-	A kind of timedrun function will be implemented in the future to prevent the
-above issue to happen.
-
-=head1 AUTHOR
-
-	Vincent Haverlant <vincent.haverlant@sgcib.com>
-
-=head1 COPYRIGHT AND LICENSE
-
-	This program is free software; you may redistribute it and/or modify
-	it under the same terms as Perl itself.
-
-=cut
-
+Job::Parallel::run($parallelism, \&dojob, scalar @hosts, @jobs);
