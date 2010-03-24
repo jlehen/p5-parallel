@@ -182,7 +182,7 @@ my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
 my $logdir = '';
 my $loghandle;
 my $outhandle;
-my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
+my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q -n';
 my $os;
 my $pingcmd;
 my $sshcmd;
