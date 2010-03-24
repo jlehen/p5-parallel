@@ -12,33 +12,33 @@ sub usage {
 	$me =~ s{.*/}{};
 	print <<EOF;
 Usage:
-- Detailled informations on each command:
-  $me help <'push'|'exec'|'pushnexec'|'readnexec'>
+* Detailled informations on each command:
+    $me help <'push'|'exec'|'pushnexec'|'readnexec'>
 
-- Remote commands:
-  $me [options] push <file> [in <dir>] on <host> [host ...]
-  $me [options] exec <command> [in <dir>] on <host> [host ...]
-  $me [options] pushnexec <command> [in <dir>] on <host> [host ...]
-  $me [options] readnexec <file> [in <dir>] on <host> [host ...]
+* Remote commands:
+    $me [options] push <file> [in <dir>] on <host> [host ...]
+    $me [options] exec <command> [in <dir>] on <host> [host ...]
+    $me [options] pushnexec <command> [in <dir>] on <host> [host ...]
+    $me [options] readnexec <file> [in <dir>] on <host> [host ...]
 
-- Local commands:
-  $me [options] exec <command> locally [for <host> [host ...]]
-  $me [options] readnexec <file> locally [for <arg> [arg ...]]
+* Local commands:
+    $me [options] exec <command> locally [for <host> [host ...]]
+    $me [options] readnexec <file> locally [for <arg> [arg ...]]
 
-- Common options:
-  -l <logdir>	Logs everything in <logdir>/
-  -n <number>	Number of commands to run simultaneously, default: 1
-  -q		Be quiet, that is don't issue command output on terminal
-  -t <seconds>	Timeout when running a command, default: 120
-  -v		Be verbose on terminal
+* Common options:
+    -l <logdir>	 Logs everything in <logdir>/
+    -n <number>	 Number of commands to run simultaneously, default: 1
+    -q		 Be quiet, that is don't issue command output on terminal
+    -t <seconds> Timeout when running a command, default: 120
+    -v		 Show command output on terminal
 
-- Remote command options:
-  -k <keyfile>	Use <keyfile> when using ssh
-  -p <seconds>	Ping timeout when testing host, disable with 0, default: 5
-  -u <user>	Use <user> when using ssh, default: \$LOGNAME
+* Remote command options:
+    -k <keyfile> Use <keyfile> when using ssh
+    -p <seconds> Ping timeout when testing host, disable with 0, default: 5
+    -u <user>	 Use <user> when using ssh, default: \$LOGNAME
 
-- Local command options:
-  -s <string>	Substitute <string> for each host, default: %ARG%
+* Local command options:
+    -s <string>	 Substitute <string> for each host, default: %ARG%
 
 EOF
 	exit 0;
@@ -169,7 +169,6 @@ use Job::Parallel;
 use Job::Timed;
 
 # Initialisation and default values
-my $VERSION='$Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $';
 my $logger_pri='user.err';
 my $pingtimeout = 5;
 my $parallelism = 1; 
@@ -244,18 +243,19 @@ sub lognormal {
 	printlog(0, $tag, ">>> $text");
 }
 
+sub logverbose {
+	my ($tag, $text) = @_;
+
+	printlog(1, $tag, ">>>>> $text");
+}
+
 sub logoutput {
 	my ($tag, $text) = @_;
 
 	if (defined $outhandle) { print $outhandle "$text\n" }
-	printlog(1, $tag, $text);
+	printlog(2, $tag, $text);
 }
 
-sub logverbose {
-	my ($tag, $text) = @_;
-
-	printlog(2, $tag, ">>>>> $text");
-}
 
 # =-=-=-=-=-=-=
 # Core routines
@@ -313,17 +313,15 @@ sub timedrun {
 	my ($timer, $command, $slaveid) = @_;
 	my ($start, $end);
 
-	logverbose($slaveid, "Begin time-bound run (max ${timer}s): $command");
 	$start = time;
 	my $status = &Job::Timed::runSubr($timer, \&pipedrun, @_);
 	if (not defined $status) {
-		logverbose($slaveid, "Job::Timed::runSubr: ".&Job::Timed::error());
+		logerror($slaveid, "Job::Timed::runSubr: ".&Job::Timed::error());
 		return -2;
 	}
 	if ($status < 0) { return $status }
 
 	$end = time;
-	logverbose($slaveid, "End time-bound run (lasted ".($end - $start)."s) with status $status: $command");
 	return $status;
 }
 
@@ -381,8 +379,11 @@ sub dojob {
 	}
 
 	lognormal($slaveid, "(job:$jobid/$jobmax) $action \@$host: $command");
-	print $outhandle "# $action \@host: $command\n";
+	if (defined $outhandle) {
+		print $outhandle "# $action \@host: $command\n";
+	}
 	if ($pingtimeout > 0) {
+		logverbose($slaveid, "Pinging $host");
 		$status = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
@@ -405,7 +406,7 @@ sub dojob {
 		} else {
 			$remotefile = "./$remotefile";
 		}
-		lognormal($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
+		logverbose($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
 		$status = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot push '$localfile' to $host");
@@ -422,6 +423,7 @@ sub dojob {
 	if ($dir) { $realcommand = "cd $dir; $realcommand" }
 
 	$realcommand = escape($realcommand);
+	logverbose($slaveid, "Running command");
 	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand 2>&1", $slaveid);
 	if ($status > 0) {
 		logerror($slaveid, "Return status $status");
@@ -471,12 +473,15 @@ my $i;
 my $state = S0;
 my ($action, $what, @hosts, $where, $dir);
 
+if (not $ARGV[0]) { usage() }
 if ($ARGV[0] eq 'help') {
-	if ($ARGV[1] eq 'exec') { help_exec() }
-	if ($ARGV[1] eq 'push') { help_push() }
-	if ($ARGV[1] eq 'pushnexec') { help_pushnexec() }
-	if ($ARGV[1] eq 'readnexec') { help_readnexec() }
-	print STDERR "ERROR: Unexpected '$ARGV[1]'\n";
+	if ($ARGV[1] && $ARGV[1] eq 'exec') { help_exec() }
+	if ($ARGV[1] && $ARGV[1] eq 'push') { help_push() }
+	if ($ARGV[1] && $ARGV[1] eq 'pushnexec') { help_pushnexec() }
+	if ($ARGV[1] && $ARGV[1] eq 'readnexec') { help_readnexec() }
+	if ($ARGV[1]) {
+		print STDERR "ERROR: Unexpected '$ARGV[1]'\n";
+	}
 	usage();
 }
 
