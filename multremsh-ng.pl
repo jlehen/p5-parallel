@@ -225,7 +225,7 @@ if ($logdir and not -d $logdir) {
 sub printlog {
 	my ($level, $tag, $text) = @_;
 	my $now = strftime("[%Y/%m/%d_%H:%M:%S]", localtime);
-	if ($verbose or ($quiet and $level < 1) or (not $quiet and $level < 2)) {
+	if ($verbose or ($quiet and $level <= 0) or (not $quiet and $level <= 1)) {
 		print "$now ($tag) $text\n";
 	}
 	if (defined $loghandle) { print $loghandle "$now ($tag) $text\n" }
@@ -243,7 +243,7 @@ sub lognormal {
 	printlog(0, $tag, ">>> $text");
 }
 
-sub logverbose {
+sub logdetail {
 	my ($tag, $text) = @_;
 
 	printlog(1, $tag, ">>>>> $text");
@@ -383,7 +383,7 @@ sub dojob {
 		print $outhandle "# $action \@host: $command\n";
 	}
 	if ($pingtimeout > 0) {
-		logverbose($slaveid, "Pinging $host");
+		logdetail($slaveid, "Pinging $host");
 		$status = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
@@ -406,7 +406,7 @@ sub dojob {
 		} else {
 			$remotefile = "./$remotefile";
 		}
-		logverbose($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
+		logdetail($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
 		$status = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot push '$localfile' to $host");
@@ -423,7 +423,7 @@ sub dojob {
 	if ($dir) { $realcommand = "cd $dir; $realcommand" }
 
 	$realcommand = escape($realcommand);
-	logverbose($slaveid, "Running command");
+	logdetail($slaveid, "Running command");
 	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand 2>&1", $slaveid);
 	if ($status > 0) {
 		logerror($slaveid, "Return status $status");
