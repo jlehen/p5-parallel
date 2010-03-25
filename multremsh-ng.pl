@@ -465,7 +465,7 @@ sub dojob {
 
 	$realcommand = escape($realcommand);
 	logdetail($slaveid, "Running command");
-	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand 2>&1", $slaveid);
+	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid);
 	if ($status > 0) {
 		logerror($slaveid, "Return status $status");
 	}
