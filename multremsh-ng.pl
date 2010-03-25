@@ -156,7 +156,9 @@ use strict;
 use Getopt::Long;
 use File::Basename;
 use POSIX qw(strftime mkdir :sys_wait_h);
+use Errno qw(:POSIX);
 use IO::Pipe;
+use IO::Select;
 
 my $dirname;
 BEGIN {
@@ -270,18 +272,25 @@ sub pipedrun {
 
 	# It would be easier to use open()'s pipe feature, but we wouldn't
 	# be able to get the return status of the command.
-	my $pipe = new IO::Pipe;
+	my $outpipe = new IO::Pipe;
+	my $errpipe = new IO::Pipe;
 	my $pid = fork;
 	if (not defined $pid) {
 		logerror($slaveid, "Can't execute command: fork: $!");
 		return 300;
 	}
 	if ($pid == 0) {
-		$pipe->writer();
+		$outpipe->writer();
+		$errpipe->writer();
 		# Set pipe as stdout.
 		my $stdout = \*STDOUT;
-		if (not defined $stdout->fdopen($pipe->fileno, 'w')) {
-			logerror($slaveid, "Can't execute command: fdopen: $!");
+		my $stderr = \*STDERR;
+		if (not defined $stdout->fdopen($outpipe->fileno, 'w')) {
+			logerror($slaveid, "Can't execute command: fdopen for stdout: $!");
+			exit 127;
+		}
+		if (not defined $stderr->fdopen($errpipe->fileno, 'w')) {
+			logerror($slaveid, "Can't execute command: fdopen for stderr: $!");
 			exit 127;
 		}
 		# Shutdown a warning from Perl: it yells when something else
@@ -291,16 +300,48 @@ sub pipedrun {
 		logerror($slaveid, "Can't execute command: exec: $!");
 		exit 127;
 	}
-	$pipe->reader();
-	while (<$pipe>) {
-		chomp;
-		logoutput($slaveid, $_);
-	}
-	$pipe->close;
+
+	$outpipe->reader();
+	$errpipe->reader();
+	$outpipe->blocking(0);
+	$errpipe->blocking(0);
+	my $select = IO::Select->new();
+	$select->add($outpipe);
+	$select->add($errpipe);
+	# $lastturn is here so we do a last check on the pipes when the
+	# child has exited, so we do not miss any output.
+	my $lastturn = 0;
+	my $status;
 	while (1) {
-		if (waitpid -1, 0 == -1) { last }
+		my @ready = $select->can_read();
+		foreach my $fh (@ready) {
+			my $pfx = '';
+			if ($fh == $errpipe) { $pfx = 'ERR: ' }
+			while (1) {
+				my $line = <$fh>;
+				if (not defined $line) { last }
+				chomp $line;
+				logoutput($slaveid, "$pfx$line");
+			}
+		}
+		if ($lastturn) { last }
+		while (1) {
+			my $pid2 = waitpid -1, WNOHANG;
+			if ($pid2 == $pid) { $status = $? }
+			if ($pid2 > 0) { next }
+			if ($pid2 == 0) { last }
+
+			# $pid2 < 0
+			if ($! != ECHILD) { next }
+			$select->remove($outpipe);
+			$select->remove($errpipe);
+			$outpipe->close();
+			$errpipe->close();
+			$lastturn = 1;
+			last;
+		}
 	}
-	my $status = $?;
+
 	if ($status & 127) {
 		logerror($slaveid, "Command killed with signal ".($status & 127));
 		return -1;
@@ -558,7 +599,7 @@ my @commands = ();
 if ($action eq 'readnexec') {
 	my $fh;
 	if (not open ($fh, '<', $what)) { die "$what: $!" }
-	while (<$fh>) {
+	while (defined <$fh>) {
 		chomp;
 		if (/^\s*$/) { next }	
 		if (/^\s\#/) { next }	
