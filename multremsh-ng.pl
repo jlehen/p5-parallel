@@ -17,13 +17,12 @@ Usage:
 
 * Remote commands:
     $me [options] push <file> [in <dir>] on <host> [host ...]
+    $me [options] pull <file> [from <dir>] on <host> [host ...]
     $me [options] exec <command> [in <dir>] on <host> [host ...]
     $me [options] pushnexec <command> [in <dir>] on <host> [host ...]
-    $me [options] readnexec <file> [in <dir>] on <host> [host ...]
 
 * Local commands:
     $me [options] exec <command> locally [for <host> [host ...]]
-    $me [options] readnexec <file> locally [for <arg> [arg ...]]
 
 * Common options:
     -l <logdir>	 Logs everything in <logdir>/
@@ -40,6 +39,10 @@ Usage:
 * Local command options:
     -s <string>	 Substitute <string> for each host, default: %ARG%
 
+* Note:
+    For each <file> or <command> option, if you use "-", then lines from
+    stdin will be read.  Empty lines and the ones starting with # will be
+    skipped.
 EOF
 	exit 0;
 }
@@ -64,6 +67,30 @@ Examples:
   $me -n 2 push 119744-11.gz in /var/tmp on host1 host2
 
   cat hosts.txt | xargs $me -n 10 push /etc/resolv.conf in /etc on
+
+EOF
+	exit 0;
+}
+
+sub help_pull {
+	my $me = $0;
+
+	$me =~ s{.*/}{};
+	print <<EOF;
+Synopsys:
+  $me pull <file> [in <dir>] on <host> [host ...]
+
+Description:
+  The ``pull'' command will just transfer <file> from each <host>, optionally
+  in the local specified <dir>.  The suffix ".host" will be appended to the
+  name of the file locally.  If no <dir> is specifed, the current directory
+  is used.
+
+  This command is only meaningful in a remote context.  Pull files
+  locally is useless.
+
+Examples:
+  $me -n 2 pull /etc/redhat-release in /var/tmp on host1 host2
 
 EOF
 	exit 0;
@@ -126,32 +153,6 @@ EOF
 	exit 0;
 }
 
-sub help_readnexec {
-	my $me = $0;
-
-	$me =~ s{.*/}{};
-	print <<EOF;
-Synopsys:
-  Remote: $me readnexec <file> [in <dir>] on <host> [host ...]
-  Local: $me readnexec <file> locally for <arg> [arg ...]
-
-Description:
-  The ``readnexec'' command is very similar to the ``exec'' command, except
-  that it reads <file> to know which commands to execute on each <host> or
-  for each <arg>.  Note that empty lines and lines beginning with # are
-  skipped.
-
-Examples:
-  echo "logger Update server." >> commands.txt
-  echo "yum update" >> commands.txt
-  echo "shutdown -r 'Update finished, rebooing'" >> commands.txt
-  cat linuxhosts.txt | xargs $me readnexec commands.txt on
-
-EOF
-	exit 0;
-}
-
-
 use strict;
 use Getopt::Long;
 use File::Basename;
@@ -184,7 +185,7 @@ my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
 my $logdir = '';
 my $loghandle;
 my $outhandle;
-my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q -n';
+my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
 my $os;
 my $pingcmd;
 my $sshcmd;
@@ -213,7 +214,7 @@ $pingcmd = 'ping -c 1';
 if ($os eq 'SunOS') { $pingcmd = 'ping' }
 
 if ($ssh_keyfile) { $ssh_opts .= ' -i '.$ssh_keyfile }
-$sshcmd = "ssh $ssh_opts";
+$sshcmd = "ssh -n $ssh_opts";
 $scpcmd = "scp $ssh_opts";
 
 if ($logdir and not -d $logdir) {
@@ -432,8 +433,23 @@ sub dojob {
 		}
 	}
 
-	$realcommand = $command;
 	$dir =~ s{/$}{};
+
+	if ($action eq 'pull') {
+		my $localfile = $command;
+		$localfile =~ s{.*/}{};
+		$localfile .= ".$host";
+
+		if (not $dir) { $dir = '.' }
+		logdetail($slaveid, "Pulling '$command' from $host into $dir/$localfile");
+		$status = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid);
+		if ($status != 0) {
+			logerror($slaveid, "Cannot pull '$command' to $host");
+		}
+		goto OUT;
+	}
+
+	$realcommand = $command;
 	if ($action eq 'push' or $action eq 'pushnexec') {
 		# This doesn't support script names with spaces in it, enclosed in quotes.
 		# But anyway, which fool would use such a thing?
@@ -484,16 +500,17 @@ OUT:
 # Here is the deterministic finite state machine of the command-line grammar.
 # It is really to implement once you have this.
 #
-#                                                                    [host]<-+
-#      .->"push"-.             "in"-->S6-->[dir]-->S7-->"on"           |     |
-#     /           \             ^                        |             |  .--+
+#      .->"pull"-.
+#     /           \                                                  [host]<-+
+#    | .->"push"-. |           "in"-->S6-->[dir]-->S7-->"on"           |     |
+#    |/           \|            ^                        |             |  .--+
 #    |             v            |                        v             v /
 # ->S0---"exec"--->S1--[cmd]-->S2---------->"on"-------->S4--[host]---S5-->
 #    |             ^           /|                        ^
-#    |\           /|          v |                        |
-#    | "pushnexec" |            +->"locally"->S3-->"for"-+
-#     \           /                           |
-#      "readnexec"                            v
+#    |\           /           v |                        |
+#      "pushnexec"              +->"locally"->S3-->"for"-+
+#                                             |
+#                                             v
 
 use constant {
 	S0 => 0, S1 => 1, S2 => 2, S3 => 3,
@@ -501,7 +518,7 @@ use constant {
 };
 
 my @expected = (
-	[ 'push', 'exec', 'pushnexec', 'readnexec' ],	# S0
+	[ 'pull', 'push', 'exec', 'pushnexec' ],	# S0
 	[ '<command>', '<file>' ],			# S1
 	[ 'on', 'locally', 'in' ],			# S2
 	[ 'for' ],					# S3
@@ -518,8 +535,8 @@ if (not $ARGV[0]) { usage() }
 if ($ARGV[0] eq 'help') {
 	if ($ARGV[1] && $ARGV[1] eq 'exec') { help_exec() }
 	if ($ARGV[1] && $ARGV[1] eq 'push') { help_push() }
+	if ($ARGV[1] && $ARGV[1] eq 'pull') { help_pull() }
 	if ($ARGV[1] && $ARGV[1] eq 'pushnexec') { help_pushnexec() }
-	if ($ARGV[1] && $ARGV[1] eq 'readnexec') { help_readnexec() }
 	if ($ARGV[1]) {
 		print STDERR "ERROR: Unexpected '$ARGV[1]'\n";
 	}
@@ -530,7 +547,7 @@ for ($i = 0; $i < @ARGV; $i++) {
 	my $w = $ARGV[$i];
 
 	if ($state == S0) {
-		if ($w eq 'exec' or $w eq 'pushnexec' or $w eq 'readnexec' or
+		if ($w eq 'exec' or $w eq 'pushnexec' or $w eq 'pull' or
 		    $w eq 'push') {
 			$action = $w;
 			$state = S1;
@@ -594,18 +611,19 @@ if ($state == S2) {
 if ($state != S3 and $state != S5) {
 	die "Expecting ".join ('/', @{$expected[$state]})." at word $i";
 }
+if ($where eq 'local' and $action ne 'exec' and $action ne 'readnexec') {
+	die "Cannot push/pull locally";
+}
 
 my @commands = ();
-if ($action eq 'readnexec') {
+if ($what eq '-') {
 	my $fh;
-	if (not open ($fh, '<', $what)) { die "$what: $!" }
-	while (defined <$fh>) {
+	while (defined <STDIN>) {
 		chomp;
 		if (/^\s*$/) { next }	
 		if (/^\s\#/) { next }	
 		push @commands, $_;
 	}
-	$action = 'read';
 } else {
 	push @commands, $what;
 }
