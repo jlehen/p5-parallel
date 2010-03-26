@@ -424,7 +424,7 @@ sub dojob {
 
 	lognormal($slaveid, "(job:$jobid/$jobmax) $action \@$host: $command");
 	if (defined $outhandle) {
-		print $outhandle "# $action \@host: $command\n";
+		print $outhandle "# $action \@$host: $command\n";
 	}
 	if ($pingtimeout > 0) {
 		logdetail($slaveid, "Pinging $host");
