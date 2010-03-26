@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 modularize() {
 	sed '
 2i \
