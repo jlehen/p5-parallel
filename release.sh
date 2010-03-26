@@ -23,4 +23,5 @@ $a \
 	}
 	' parallel.pl
 } > parallel
+chmod +x parallel
 echo Creating \'parallel\'.
