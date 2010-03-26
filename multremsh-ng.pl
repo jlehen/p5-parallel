@@ -218,7 +218,9 @@ $sshcmd = "ssh -n $ssh_opts";
 $scpcmd = "scp $ssh_opts";
 
 if ($logdir and not -d $logdir) {
-	mkdir $logdir, 0700;
+	if (not mkdir $logdir, 0700) {
+		die "Cannot create directory '$logdir': $!";
+	}
 }
 
 # =-=-=-=-=-=-
