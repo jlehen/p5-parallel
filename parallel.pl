@@ -672,8 +672,6 @@ if (@hosts > 0) {
 	}
 }
 
-use Data::Dumper; print Dumper(\@jobs)."\n";
-
 $SIG{'INT'} = $SIG{'TERM'} = sub {
 	Job::Parallel::terminate();
 	if (!Job::Parallel::isChild()) { exit 0 }
