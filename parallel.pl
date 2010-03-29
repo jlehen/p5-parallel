@@ -185,6 +185,7 @@ my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
 my $logdir = '';
 my $loghandle;
 my $outhandle;
+my $failfile;
 my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
 my $os;
 my $pingcmd;
@@ -234,6 +235,15 @@ sub printlog {
 		print "$now ($tag) $text\n";
 	}
 	if (defined $loghandle) { print $loghandle "$now ($tag) $text\n" }
+
+	# Late creation of the fail file on error.
+	if ($level < 0 and $logdir) {
+		my $failhandle;
+		if (open $failhandle, '>>', $failfile) {
+			print $failhandle "$now ($tag) $text\n";
+			close $failhandle;
+		}
+	}
 }
 
 sub logerror {
@@ -267,9 +277,9 @@ sub logoutput {
 # =-=-=-=-=-=-=
 
 #
-# This function creates a pipe, forks and sets it as stdout before running the
-# child.  The parent process reads the pipe and writes it to the log.
-# The return value is the exit status of the executed command.
+# This function creates 2 pipes, forks and sets them as stdout and stderr
+# before running the child.  The parent process reads the pipes and writes
+# it to the log.  The return value is the exit status of the executed command.
 sub pipedrun {
 	my ($timer, $command, $slaveid) = @_;
 
@@ -353,20 +363,34 @@ sub pipedrun {
 }
 
 
+# Returns a list ($status, $duration).
 sub timedrun {
 	my ($timer, $command, $slaveid) = @_;
 	my ($start, $end);
 
 	$start = time;
-	my $status = &Job::Timed::runSubr($timer, \&pipedrun, @_);
-	if (not defined $status) {
-		logerror($slaveid, "Job::Timed::runSubr: ".&Job::Timed::error());
-		return -2;
-	}
-	if ($status < 0) { return $status }
-
+	my $status = Job::Timed::runSubr($timer, \&pipedrun, @_);
 	$end = time;
-	return $status;
+	if (not defined $status) {
+		my $error = Job::timed::status();
+		if ($error >= 0) {
+			die "ASSERTION FAILED: Job::Timed::runSubr() ".
+			    "reported an error but Job::timed::status() ".
+			    "return $error";
+		}
+		# if ($error == -1), then log message already issued
+		if ($error == -2) {
+			logerror($slaveid, "Command exhausted its allocated time (${timer}s)");
+		} elsif ($error == -3) {
+			logerror($slaveid, "Command as been interrupted after (".($end - $start)."s)");
+		} else {
+			logerror($slaveid, "Job::Timed::runSubr: ".Job::Timed::error().
+			    " (after ".($end - $start)."s)");
+		}
+		return $status;
+	}
+
+	return ($status, $end - $start);
 }
 
 
@@ -389,8 +413,7 @@ sub dojob {
 	my $command = $job->{'command'};
 	my $host = $job->{'host'};
 	my $dir = $job->{'dir'};
-	my ($push, $exec);
-	my $status;
+	my ($status, $duration);
 	my $realcommand;
 
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
@@ -399,13 +422,14 @@ sub dojob {
 		my $logfile = $host ? $host : $jobid;
 
 		if (not open $loghandle, '>>', "$logdir/$logfile.log") {
-			logerror($slaveid, "Cannot open '$logdir/$host' for writing: $!");
+			logerror($slaveid, "Cannot open '$logdir/$logfile.log' for writing: $!");
 			goto OUT;
 		}
 		if (not open $outhandle, '>>', "$logdir/$logfile.out") {
-			logerror($slaveid, "Cannot open '$logdir/$host' for writing: $!");
+			logerror($slaveid, "Cannot open '$logdir/$logfile.out' for writing: $!");
 			goto OUT;
 		}
+		$failfile = "$logdir/$logfile.fail";
 		# Shared among multiple process, so disable buffering.
 		$loghandle->autoflush(1);
 		$outhandle->autoflush(1);
@@ -418,7 +442,10 @@ sub dojob {
 		if (defined $outhandle) {
 			print $outhandle "# exec local: $command\n";
 		}
-		$status = timedrun($timeout, $command, $slaveid);
+		($status, $duration) = timedrun($timeout, $command, $slaveid);
+		if ($status > 0) {
+			logerror($slaveid, "Command returned status $status")
+		}
 		goto OUT;
 	}
 
@@ -428,7 +455,7 @@ sub dojob {
 	}
 	if ($pingtimeout > 0) {
 		logdetail($slaveid, "Pinging $host");
-		$status = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid);
+		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
 			goto OUT;
@@ -444,7 +471,7 @@ sub dojob {
 
 		if (not $dir) { $dir = '.' }
 		logdetail($slaveid, "Pulling '$command' from $host into $dir/$localfile");
-		$status = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid);
+		($status, $duration) = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot pull '$command' to $host");
 		}
@@ -466,7 +493,7 @@ sub dojob {
 			$remotefile = "./$remotefile";
 		}
 		logdetail($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
-		$status = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid);
+		($status, $duration) = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid);
 		if ($status != 0) {
 			logerror($slaveid, "Cannot push '$localfile' to $host");
 			goto OUT;
@@ -483,9 +510,11 @@ sub dojob {
 
 	$realcommand = escape($realcommand);
 	logdetail($slaveid, "Running command");
-	$status = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid);
+	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid);
 	if ($status > 0) {
-		logerror($slaveid, "Return status $status");
+		logerror($slaveid, "Command returned status $status after ${duration}s");
+	} else {
+		logdetail($slaveid, "Command returned successfully after ${duration}s");
 	}
 
 OUT:
