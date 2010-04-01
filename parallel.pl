@@ -325,6 +325,9 @@ sub pipedrun {
 	# child has exited, so we do not miss any output.
 	my $lastturn = 0;
 	my $status;
+	# $halfline is used when we didn't get a full line.  So instead of
+	# logging a halfline, buffer it and try to fetch the leftover.
+	my $halfline = undef;
 	while (1) {
 		my @ready = $select->can_read();
 		foreach my $fh (@ready) {
@@ -333,8 +336,19 @@ sub pipedrun {
 			while (1) {
 				my $line = <$fh>;
 				if (not defined $line) { last }
-				chomp $line;
+				if (defined $halfline) {
+					$line = $halfline . $line;
+					$halfline = undef;
+				}
+				if (not chomp $line) {
+					$halfline = $line
+					next;
+				}
 				logoutput($slaveid, "$pfx$line");
+			}
+			if (defined $halfline) {
+				logoutput($slaveid, "$pfx$line");
+				$halfline = undef;
 			}
 		}
 		if ($lastturn) { last }
