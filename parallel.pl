@@ -187,6 +187,7 @@ my $loghandle;
 my $outhandle;
 my $failfile;
 my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
+my $precision;
 my $os;
 my $pingcmd;
 my $sshcmd;
@@ -224,6 +225,9 @@ if ($logdir and not -d $logdir) {
 	}
 }
 
+# Precision needed to print all thread ids using the same width.
+$precision = sprintf ("%d", log($parallelism) / log(10) + 1);
+
 # =-=-=-=-=-=-
 # Log routines
 # =-=-=-=-=-=-
@@ -231,6 +235,7 @@ if ($logdir and not -d $logdir) {
 sub printlog {
 	my ($level, $tag, $text) = @_;
 	my $now = strftime("[%Y/%m/%d_%H:%M:%S]", localtime);
+	$tag = sprintf ("%0*d", $precision, $tag);
 	if ($verbose or ($quiet and $level <= 0) or (not $quiet and $level <= 1)) {
 		print "$now ($tag) $text\n";
 	}
@@ -405,7 +410,7 @@ sub timedrun {
 
 	my $error = Job::Timed::status();
 	if ($error >= 0) {
-		die "ASSERTION FAILED: Job::Timed::runSubr() ".
+		die "ASSERTION FAILED: ($slaveid) Job::Timed::runSubr() ".
 		    "reported an error but Job::timed::status() ".
 		    "returned $error";
 	}
@@ -485,7 +490,7 @@ sub dojob {
 	}
 	if ($pingtimeout > 0) {
 		logdetail($slaveid, "Pinging $host");
-		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid, "ping(8)");
+		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid, "ping(8) \@$host");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
 			goto OUT;
@@ -501,7 +506,7 @@ sub dojob {
 
 		if (not $dir) { $dir = '.' }
 		logdetail($slaveid, "Pulling '$command' from $host into $dir/$localfile");
-		($status, $duration) = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid, "scp(1)");
+		($status, $duration) = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid, "scp(1) \@$host");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot pull '$command' to $host");
 		}
@@ -523,7 +528,7 @@ sub dojob {
 			$remotefile = "./$remotefile";
 		}
 		logdetail($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
-		($status, $duration) = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid, "scp(1)");
+		($status, $duration) = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid, "scp(1) \@$host");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot push '$localfile' to $host");
 			goto OUT;
@@ -540,11 +545,13 @@ sub dojob {
 
 	$realcommand = escape($realcommand);
 	logdetail($slaveid, "Running command");
-	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid, "Command");
+	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid, "Command \@$host");
+
+	if ($status < 0) { goto OUT }
 	if ($status > 0) {
-		logerror($slaveid, "Command returned status $status after ${duration}s");
+		logerror($slaveid, "Command \@$host returned status $status after ${duration} sec");
 	} else {
-		logdetail($slaveid, "Command returned successfully after ${duration}s");
+		logdetail($slaveid, "Command \@$host returned status $status after ${duration} sec");
 	}
 
 OUT:
