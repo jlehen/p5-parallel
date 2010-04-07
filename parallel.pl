@@ -34,6 +34,7 @@ Usage:
 * Remote command options:
     -k <keyfile> Use <keyfile> when using ssh
     -p <seconds> Ping timeout when testing host, disable with 0, default: 5
+    -S <seconds> Timeout when scp'ing a file, default: 30
     -u <user>	 Use <user> when using ssh, default: \$LOGNAME
 
 * Local command options:
@@ -178,6 +179,7 @@ my $parallelism = 1;
 my $verbose = 0;
 my $quiet = 0;
 my $syslogmsg;
+my $scptimeout = 30;
 my $timeout = 120;
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
@@ -205,6 +207,7 @@ GetOptions(
 	'u=s' => \$ssh_user,
 	'k=s' => \$ssh_keyfile,
 	'v' => \$verbose,
+	'S=s', \$scptimeout,
 	's=s' => \$subst,
 	'q' => \$quiet,
 	'h' => \&usage,
@@ -506,7 +509,7 @@ sub dojob {
 
 		if (not $dir) { $dir = '.' }
 		logdetail($slaveid, "Pulling '$command' from $host into $dir/$localfile");
-		($status, $duration) = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid, "scp(1) \@$host");
+		($status, $duration) = timedrun($scptimeout, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid, "scp(1) \@$host");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot pull '$command' to $host");
 		}
@@ -528,7 +531,7 @@ sub dojob {
 			$remotefile = "./$remotefile";
 		}
 		logdetail($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
-		($status, $duration) = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid, "scp(1) \@$host");
+		($status, $duration) = timedrun($scptimeout, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid, "scp(1) \@$host");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot push '$localfile' to $host");
 			goto OUT;
