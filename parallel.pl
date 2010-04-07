@@ -325,6 +325,8 @@ sub pipedrun {
 	# child has exited, so we do not miss any output.
 	my $lastturn = 0;
 	my $status;
+	my $laststatus;
+	my @zombies = ();
 	# $halfline is used when we didn't get a full line.  So instead of
 	# logging a halfline, buffer it and try to fetch the leftover.
 	my $halfline = undef;
@@ -332,22 +334,23 @@ sub pipedrun {
 		my @ready = $select->can_read();
 		foreach my $fh (@ready) {
 			my $pfx = '';
+			my $line;
 			if ($fh == $errpipe) { $pfx = 'ERR: ' }
 			while (1) {
-				my $line = <$fh>;
+				$line = <$fh>;
 				if (not defined $line) { last }
 				if (defined $halfline) {
 					$line = $halfline . $line;
 					$halfline = undef;
 				}
 				if (not chomp $line) {
-					$halfline = $line
+					$halfline = $line;
 					next;
 				}
 				logoutput($slaveid, "$pfx$line");
 			}
 			if (defined $halfline) {
-				logoutput($slaveid, "$pfx$line");
+				logoutput($slaveid, "$pfx$halfline");
 				$halfline = undef;
 			}
 		}
@@ -355,7 +358,11 @@ sub pipedrun {
 		while (1) {
 			my $pid2 = waitpid -1, WNOHANG;
 			if ($pid2 == $pid) { $status = $? }
-			if ($pid2 > 0) { next }
+			if ($pid2 > 0) {
+				$laststatus = $?;
+				push @zombies, $pid2;
+				next;
+			}
 			if ($pid2 == 0) { last }
 
 			# $pid2 < 0
@@ -367,6 +374,11 @@ sub pipedrun {
 			$lastturn = 1;
 			last;
 		}
+	}
+
+	if (not defined $status) {
+		logerror($slaveid, "WEIRD BEHAVIOUR DETECTED, child PID $pid vanished (zombies seen: @zombies)");
+		$status = $laststatus;
 	}
 
 	if ($status & 127) {
@@ -385,25 +397,27 @@ sub timedrun {
 	$start = time;
 	my $status = Job::Timed::runSubr($timer, \&pipedrun, @_);
 	$end = time;
-	if (not defined $status) {
-		my $error = Job::timed::status();
-		if ($error >= 0) {
-			die "ASSERTION FAILED: Job::Timed::runSubr() ".
-			    "reported an error but Job::timed::status() ".
-			    "return $error";
-		}
-		# if ($error == -1), then log message already issued
-		if ($error == -2) {
-			logerror($slaveid, "Command exhausted its allocated time (${timer}s)");
-		} elsif ($error == -3) {
-			logerror($slaveid, "Command as been interrupted after (".($end - $start)."s)");
-		} else {
-			logerror($slaveid, "Job::Timed::runSubr: ".Job::Timed::error().
-			    " (after ".($end - $start)."s)");
-		}
-		return $status;
+	if (defined $status) {
+		return ($status, $end - $start);
 	}
 
+	my $error = Job::Timed::status();
+	if ($error >= 0) {
+		die "ASSERTION FAILED: Job::Timed::runSubr() ".
+		    "reported an error but Job::timed::status() ".
+		    "returned $error";
+	}
+	$status = $error;
+
+	# if ($error == -1), then log message already issued
+	if ($error == -2) {
+		logerror($slaveid, "Command exhausted its allocated time (${timer}s)");
+	} elsif ($error == -3) {
+		logerror($slaveid, "Command as been interrupted after (".($end - $start)."s)");
+	} else {
+		logerror($slaveid, "Job::Timed::runSubr: ".Job::Timed::error().
+		    " (after ".($end - $start)."s)");
+	}
 	return ($status, $end - $start);
 }
 
