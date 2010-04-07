@@ -12,6 +12,7 @@ sub usage {
 	$me =~ s{.*/}{};
 	print <<EOF;
 Usage:
+
 * Detailled informations on each command:
     $me help <'push'|'exec'|'pushnexec'|'readnexec'>
 
@@ -116,7 +117,7 @@ Description:
   When used in its local version, the ``exec'' command will execute <command>
   for each <arg>.  <command> may be a full-fledged shell command, including
   pipes, quotes and even scripting.  Just be careful to enclose it in quotes,
-  so it is considered as a single argument.  Every %ARG% string in the
+  so it is considered as a single argument.  Every "%ARG%" string in the
   command will be replaced by the current <arg>.  This string can be changed
   with the -s option.
 
