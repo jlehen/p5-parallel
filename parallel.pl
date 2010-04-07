@@ -281,7 +281,7 @@ sub logoutput {
 # before running the child.  The parent process reads the pipes and writes
 # it to the log.  The return value is the exit status of the executed command.
 sub pipedrun {
-	my ($timer, $command, $slaveid) = @_;
+	my ($timer, $command, $slaveid, $what) = @_;
 
 	# It would be easier to use open()'s pipe feature, but we wouldn't
 	# be able to get the return status of the command.
@@ -289,7 +289,7 @@ sub pipedrun {
 	my $errpipe = new IO::Pipe;
 	my $pid = fork;
 	if (not defined $pid) {
-		logerror($slaveid, "Can't execute command: fork: $!");
+		logerror($slaveid, "Cannot fork: $!");
 		return 300;
 	}
 	if ($pid == 0) {
@@ -310,7 +310,7 @@ sub pipedrun {
 		# than "exit" is called after "exec".
 		no warnings;
 		exec $command;
-		logerror($slaveid, "Can't execute command: exec: $!");
+		logerror($slaveid, "Cannot exec: $!");
 		exit 127;
 	}
 
@@ -382,7 +382,7 @@ sub pipedrun {
 	}
 
 	if ($status & 127) {
-		logerror($slaveid, "Command killed with signal ".($status & 127));
+		logerror($slaveid, "$what killed with signal ".($status & 127));
 		return -1;
 	}
 	return ($status >> 8);
@@ -390,8 +390,10 @@ sub pipedrun {
 
 
 # Returns a list ($status, $duration).
+# $status is always defined.  If it is negative, then the appropriate
+# log has already been issued.
 sub timedrun {
-	my ($timer, $command, $slaveid) = @_;
+	my ($timer, $command, $slaveid, $what) = @_;
 	my ($start, $end);
 
 	$start = time;
@@ -411,9 +413,9 @@ sub timedrun {
 
 	# if ($error == -1), then log message already issued
 	if ($error == -2) {
-		logerror($slaveid, "Command exhausted its allocated time (${timer}s)");
+		logerror($slaveid, "$what exhausted its allocated time (${timer}s)");
 	} elsif ($error == -3) {
-		logerror($slaveid, "Command as been interrupted after (".($end - $start)."s)");
+		logerror($slaveid, "$what as been interrupted after (".($end - $start)."s)");
 	} else {
 		logerror($slaveid, "Job::Timed::runSubr: ".Job::Timed::error().
 		    " (after ".($end - $start)."s)");
@@ -422,7 +424,7 @@ sub timedrun {
 }
 
 
-# Enclose a command in single quotes.
+# Enclose a command in single quotes in order to execute it through ssh.
 sub escape {
 	my ($s) = @_;
 
@@ -470,7 +472,7 @@ sub dojob {
 		if (defined $outhandle) {
 			print $outhandle "# exec local: $command\n";
 		}
-		($status, $duration) = timedrun($timeout, $command, $slaveid);
+		($status, $duration) = timedrun($timeout, $command, $slaveid, "Command");
 		if ($status > 0) {
 			logerror($slaveid, "Command returned status $status")
 		}
@@ -483,7 +485,7 @@ sub dojob {
 	}
 	if ($pingtimeout > 0) {
 		logdetail($slaveid, "Pinging $host");
-		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid);
+		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid, "ping(8)");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot ping '$host'");
 			goto OUT;
@@ -499,7 +501,7 @@ sub dojob {
 
 		if (not $dir) { $dir = '.' }
 		logdetail($slaveid, "Pulling '$command' from $host into $dir/$localfile");
-		($status, $duration) = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid);
+		($status, $duration) = timedrun(30, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid, "scp(1)");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot pull '$command' to $host");
 		}
@@ -521,7 +523,7 @@ sub dojob {
 			$remotefile = "./$remotefile";
 		}
 		logdetail($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
-		($status, $duration) = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid);
+		($status, $duration) = timedrun(30, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid, "scp(1)");
 		if ($status != 0) {
 			logerror($slaveid, "Cannot push '$localfile' to $host");
 			goto OUT;
@@ -538,7 +540,7 @@ sub dojob {
 
 	$realcommand = escape($realcommand);
 	logdetail($slaveid, "Running command");
-	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid);
+	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid, "Command");
 	if ($status > 0) {
 		logerror($slaveid, "Command returned status $status after ${duration}s");
 	} else {
