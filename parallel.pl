@@ -41,10 +41,16 @@ Usage:
 * Local command options:
     -s <string>	 Substitute <string> for each host, default: %ARG%
 
-* Note:
+* Notes:
     For each <file> or <command> option, if you use "-", then lines from
     stdin will be read.  Empty lines and the ones starting with # will be
     skipped.
+
+    When using the -l option, two files are created by commands:
+      .log file contains parallel.pl messages and command stdout/stderr;
+      .out file contains command stdout/stderr;
+    Also, a .fail file exists if the command failed somewhere.  It contains
+    the reason of the failure.
 EOF
 	exit 0;
 }
