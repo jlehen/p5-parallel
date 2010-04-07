@@ -551,7 +551,7 @@ sub dojob {
 	if ($status > 0) {
 		logerror($slaveid, "Command \@$host returned status $status after ${duration} sec");
 	} else {
-		logdetail($slaveid, "Command \@$host returned status $status after ${duration} sec");
+		logdetail($slaveid, "Command \@$host returned successfully after ${duration} sec");
 	}
 
 OUT:
