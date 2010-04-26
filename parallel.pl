@@ -42,9 +42,11 @@ Usage:
     -s <string>	 Substitute <string> for each host, default: %ARG%
 
 * Notes:
-    For each <file> or <command> option, if you use "-", then lines from
-    stdin will be read.  Empty lines and the ones starting with # will be
-    skipped.
+    For each <file>/<command> or <host> parameter, you can use either "-" to
+    read the list from stdin or "file:</path/to/file>" to read from a file
+    directly.  In both case empty lines and comment lines (starting with #)
+    will be skipped.  Obviously you cannot use "-" for both <file>/<command>
+    and <host> simultaneously.
 
     When using the -l option, two files are created by commands:
       .log file contains parallel.pl messages and command stdout/stderr;
@@ -692,19 +694,59 @@ if ($state != S3 and $state != S5) {
 if ($where eq 'local' and $action ne 'exec' and $action ne 'readnexec') {
 	die "Cannot push/pull locally";
 }
+if ($what eq '-') {
+	foreach (@hosts) {
+		if ($_ ne '-') { next }
+		die 'Cannot use "-" for both <file>/<command> and <host>.';
+	}
+}
 
 my @commands = ();
-if ($what eq '-') {
+if ($what eq '-' or $what =~ m/^file\:/) {
 	my $fh;
-	while (defined <STDIN>) {
-		chomp;
-		if (/^\s*$/) { next }	
-		if (/^\s\#/) { next }	
-		push @commands, $_;
+	if ($what eq '-') {
+		$fh = \*STDIN;
+	} else {
+		$what =~ m/^file\:(.*)/;
+		my $file = $1;
+		if (not open ($fh, '<', $file)) { die "$file: $!" }
 	}
+	my $line;
+	while (defined ($line = <$fh>)) {
+		chomp $line;
+		if ($line =~ m/^\s*$/) { next }	
+		if ($line =~ m/^\s\#/) { next }	
+		push @commands, $line;
+	}
+	if ($what ne '-') { close $fh }
 } else {
 	push @commands, $what;
 }
+
+my @hosts2;
+foreach my $host (@hosts) {
+	if ($host ne '-' and $host !~ m/^file\:/) {
+		push @hosts2, $host;
+		next;
+	}
+	my $fh;
+	if ($host eq '-') {
+		$fh = \*STDIN;
+	} else {
+		$host =~ m/^file\:(.*)/;
+		my $file = $1;
+		if (not open ($fh, '<', $file)) { die "$file: $!" }
+	}
+	my $line;
+	while (defined ($line = <$fh>)) {
+		chomp $line;
+		if ($line =~ m/^\s*$/) { next }	
+		if ($line =~ m/^\s\#/) { next }	
+		push @hosts2, $line;
+	}
+	if ($host ne '-') { close $fh }
+}
+@hosts = @hosts2;
 
 my @jobs;
 if (@hosts > 0) {
