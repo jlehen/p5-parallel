@@ -183,10 +183,10 @@ use Job::Parallel;
 use Job::Timed;
 
 # Initialisation and default values
-my $pingtimeout = 5;
 my $parallelism = 1; 
 my $verbose = 0;
 my $quiet = 0;
+my $pingtimeout = 5;
 my $scptimeout = 30;
 my $timeout = 120;
 my $connecttimeout = 0;
@@ -209,16 +209,16 @@ $|=1;
 Getopt::Long::Configure qw(posix_default require_order bundling no_ignore_case);
 GetOptions(
 	'l=s' => \$logdir,
-	'p=i' => \$pingtimeout,
+	'v' => \$verbose,
+	'q' => \$quiet,
 	'n=i' => \$parallelism,
+	'p=i' => \$pingtimeout,
 	't=i' => \$timeout,
+	'S=i' => \$scptimeout,
+	'C=i' => \$connecttimeout,
 	'u=s' => \$ssh_user,
 	'k=s' => \$ssh_keyfile,
-	'v' => \$verbose,
-	'S=i', \$scptimeout,
-	'C=i', \$connecttimeout,
 	's=s' => \$subst,
-	'q' => \$quiet,
 	'h' => \&usage,
 ) or (die $!);
 
