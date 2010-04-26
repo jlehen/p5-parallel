@@ -33,7 +33,7 @@ Usage:
     -v		 Show command output on terminal
 
 * Remote command options:
-    -C <seconds> Connect timeout for ssh/scp
+    -C <seconds> Connect timeout for ssh/scp, default: 10
     -k <keyfile> Use <keyfile> when using ssh
     -p <seconds> Ping timeout when testing host, disable with 0, default: 5
     -S <seconds> Timeout when scp'ing a file, default: 30
@@ -189,7 +189,7 @@ my $quiet = 0;
 my $pingtimeout = 5;
 my $scptimeout = 30;
 my $timeout = 120;
-my $connecttimeout = 0;
+my $connecttimeout = 10;
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
 my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
