@@ -33,6 +33,7 @@ Usage:
     -v		 Show command output on terminal
 
 * Remote command options:
+    -C <seconds> Connect timeout for ssh/scp
     -k <keyfile> Use <keyfile> when using ssh
     -p <seconds> Ping timeout when testing host, disable with 0, default: 5
     -S <seconds> Timeout when scp'ing a file, default: 30
@@ -190,6 +191,7 @@ my $quiet = 0;
 my $syslogmsg;
 my $scptimeout = 30;
 my $timeout = 120;
+my $connecttimeout = 0;
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
 my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
@@ -216,7 +218,8 @@ GetOptions(
 	'u=s' => \$ssh_user,
 	'k=s' => \$ssh_keyfile,
 	'v' => \$verbose,
-	'S=s', \$scptimeout,
+	'S=i', \$scptimeout,
+	'C=i', \$connecttimeout,
 	's=s' => \$subst,
 	'q' => \$quiet,
 	'h' => \&usage,
@@ -228,6 +231,7 @@ $pingcmd = 'ping -c 1';
 if ($os eq 'SunOS') { $pingcmd = 'ping' }
 
 if ($ssh_keyfile) { $ssh_opts .= ' -i '.$ssh_keyfile }
+if ($connecttimeout > 0) { $ssh_opts .= " -o ConnectTimeout=".$connecttimeout }
 $sshcmd = "ssh -n $ssh_opts";
 $scpcmd = "scp $ssh_opts";
 
