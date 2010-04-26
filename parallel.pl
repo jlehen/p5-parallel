@@ -769,8 +769,10 @@ if (@hosts > 0) {
 		foreach my $cmd (@commands) {
 			foreach my $host (@hosts) {
 				my $job = {};
+				my $realcmd = $cmd;
+				$realcmd =~ s/$subst/$host/g;
 				$job->{'action'} = $action;
-				$job->{'command'} = $cmd;
+				$job->{'command'} = $realcmd;
 				$job->{'host'} = $host;
 				$job->{'dir'} = $dir ? $dir : '';
 				push @jobs, $job;
