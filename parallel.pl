@@ -126,12 +126,13 @@ Description:
   When used in its local version, the ``exec'' command will execute <command>
   for each <arg>.  <command> may be a full-fledged shell command, including
   pipes, quotes and even scripting.  Just be careful to enclose it in quotes,
-  so it is considered as a single argument.  Every "%ARG%" string in the
-  command will be replaced by the current <arg>.  This string can be changed
-  with the -s option.
+  so it is considered as a single argument.
+
+  Every "%ARG%" string in the command will be replaced by the current <arg>.
+  This string can be changed with the -s option.
 
 Examples:
-  $me -n 2 exec "uname -s" on host1 host2 host3 host4
+  $me -n 2 exec "echo -n "%ARG% is: "; uname -s" on host1 host2 host3 host4
 
   $me -n 2 exec "grep ^%ARG%: /etc:passwd" locally for root jlehen
 
