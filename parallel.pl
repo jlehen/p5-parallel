@@ -26,7 +26,7 @@ Usage:
     $me [options] exec <command> locally [for <host> [host ...]]
 
 * Common options:
-    -l <logdir>	 Logs everything in <logdir>/
+    -l <logdir>	 Logs everything in <logdir>/ (will be created)
     -n <number>	 Number of commands to run simultaneously, default: 1
     -q		 Be quiet, that is don't issue command output on terminal
     -t <seconds> Timeout when running a command, default: 120
