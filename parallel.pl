@@ -799,4 +799,4 @@ $SIG{'INT'} = $SIG{'TERM'} = sub {
 	if (!Job::Parallel::isChild()) { exit 0 }
 };
 
-Job::Parallel::run($parallelism, \&dojob, scalar @hosts, @jobs);
+Job::Parallel::run($parallelism, \&dojob, scalar (@jobs), @jobs);
