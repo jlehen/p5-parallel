@@ -14,7 +14,7 @@ sub usage {
 Usage:
 
 * Detailled informations on each command:
-    $me help <'push'|'exec'|'pushnexec'|'readnexec'>
+    $me help <'push'|'pull'|'exec'|'pushnexec'>
 
 * Remote commands:
     $me [options] push <file> [in <dir>] on <host> [host ...]
