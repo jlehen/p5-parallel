@@ -249,7 +249,6 @@ $precision = sprintf ("%d", log($parallelism) / log(10) + 1);
 sub printlog {
 	my ($level, $tag, $text) = @_;
 	my $now = strftime("[%Y/%m/%d_%H:%M:%S]", localtime);
-	$tag = sprintf ("%0*d", $precision, $tag);
 	if ($verbose or ($quiet and $level <= 0) or (not $quiet and $level <= 1)) {
 		print "$now ($tag) $text\n";
 	}
@@ -300,7 +299,7 @@ sub logoutput {
 # before running the child.  The parent process reads the pipes and writes
 # it to the log.  The return value is the exit status of the executed command.
 sub pipedrun {
-	my ($timer, $command, $slaveid, $what) = @_;
+	my ($timer, $command, $tag, $descwhat) = @_;
 
 	# It would be easier to use open()'s pipe feature, but we wouldn't
 	# be able to get the return status of the command.
@@ -308,7 +307,7 @@ sub pipedrun {
 	my $errpipe = new IO::Pipe;
 	my $pid = fork;
 	if (not defined $pid) {
-		logerror($slaveid, "Cannot fork: $!");
+		logerror($tag, "Cannot fork: $!");
 		return 300;
 	}
 	if ($pid == 0) {
@@ -318,18 +317,18 @@ sub pipedrun {
 		my $stdout = \*STDOUT;
 		my $stderr = \*STDERR;
 		if (not defined $stdout->fdopen($outpipe->fileno, 'w')) {
-			logerror($slaveid, "Can't execute command: fdopen for stdout: $!");
+			logerror($tag, "Can't execute command: fdopen for stdout: $!");
 			exit 127;
 		}
 		if (not defined $stderr->fdopen($errpipe->fileno, 'w')) {
-			logerror($slaveid, "Can't execute command: fdopen for stderr: $!");
+			logerror($tag, "Can't execute command: fdopen for stderr: $!");
 			exit 127;
 		}
 		# Shutdown a warning from Perl: it yells when something else
 		# than "exit" is called after "exec".
 		no warnings;
 		exec $command;
-		logerror($slaveid, "Cannot exec: $!");
+		logerror($tag, "Cannot exec: $!");
 		exit 127;
 	}
 
@@ -366,10 +365,10 @@ sub pipedrun {
 					$halfline = $line;
 					next;
 				}
-				logoutput($slaveid, "$pfx$line");
+				logoutput($tag, "$pfx$line");
 			}
 			if (defined $halfline) {
-				logoutput($slaveid, "$pfx$halfline");
+				logoutput($tag, "$pfx$halfline");
 				$halfline = undef;
 			}
 		}
@@ -396,12 +395,12 @@ sub pipedrun {
 	}
 
 	if (not defined $status) {
-		logerror($slaveid, "WEIRD BEHAVIOUR DETECTED, child PID $pid vanished (zombies seen: @zombies)");
+		logerror($tag, "WEIRD BEHAVIOUR DETECTED, child PID $pid vanished (zombies seen: @zombies)");
 		$status = $laststatus;
 	}
 
 	if ($status & 127) {
-		logerror($slaveid, "$what killed with signal ".($status & 127));
+		logerror($tag, "$descwhat killed with signal ".($status & 127));
 		return -1;
 	}
 	return ($status >> 8);
@@ -412,7 +411,7 @@ sub pipedrun {
 # $status is always defined.  If it is negative, then the appropriate
 # log has already been issued.
 sub timedrun {
-	my ($timer, $command, $slaveid, $what) = @_;
+	my ($timer, $command, $tag, $descwhat) = @_;
 	my ($start, $end);
 
 	$start = time;
@@ -424,7 +423,7 @@ sub timedrun {
 
 	my $error = Job::Timed::status();
 	if ($error >= 0) {
-		die "ASSERTION FAILED: ($slaveid) Job::Timed::runSubr() ".
+		die "ASSERTION FAILED: ($tag) Job::Timed::runSubr() ".
 		    "reported an error but Job::timed::status() ".
 		    "returned $error";
 	}
@@ -432,11 +431,11 @@ sub timedrun {
 
 	# if ($error == -1), then log message already issued
 	if ($error == -2) {
-		logerror($slaveid, "$what exhausted its allocated time (${timer}s)");
+		logerror($tag, "$descwhat exhausted its allocated time (${timer}s)");
 	} elsif ($error == -3) {
-		logerror($slaveid, "$what as been interrupted after (".($end - $start)."s)");
+		logerror($tag, "$descwhat as been interrupted after (".($end - $start)."s)");
 	} else {
-		logerror($slaveid, "Job::Timed::runSubr: ".Job::Timed::error().
+		logerror($tag, "Job::Timed::runSubr: ".Job::Timed::error().
 		    " (after ".($end - $start)."s)");
 	}
 	return ($status, $end - $start);
@@ -464,18 +463,22 @@ sub dojob {
 	my $dir = $job->{'dir'};
 	my ($status, $duration);
 	my $realcommand;
+	my $tag;
 
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
+
+	$tag = sprintf ("%0*d", $precision, $slaveid);
+	if ($host) { $tag = "$tag:$host" }
 
 	if ($logdir) {
 		my $logfile = $host ? $host : $jobid;
 
 		if (not open $loghandle, '>>', "$logdir/$logfile.log") {
-			logerror($slaveid, "Cannot open '$logdir/$logfile.log' for writing: $!");
+			logerror($tag, "Cannot open '$logdir/$logfile.log' for writing: $!");
 			goto OUT;
 		}
 		if (not open $outhandle, '>>', "$logdir/$logfile.out") {
-			logerror($slaveid, "Cannot open '$logdir/$logfile.out' for writing: $!");
+			logerror($tag, "Cannot open '$logdir/$logfile.out' for writing: $!");
 			goto OUT;
 		}
 		$failfile = "$logdir/$logfile.fail";
@@ -487,26 +490,26 @@ sub dojob {
 	# Local run is straightforward.
 	if (not $host) {
 		# Sanity checks after the parser ensured that the action is 'exec'.
-		lognormal($slaveid, "(job:$jobid/$jobmax) exec local: $command");
+		lognormal($tag, "(job:$jobid/$jobmax) exec local: $command");
 		if (defined $outhandle) {
 			print $outhandle "# exec local: $command\n";
 		}
-		($status, $duration) = timedrun($timeout, $command, $slaveid, "Command");
+		($status, $duration) = timedrun($timeout, $command, $tag, "Command");
 		if ($status > 0) {
-			logerror($slaveid, "Command returned status $status")
+			logerror($tag, "Command returned status $status")
 		}
 		goto OUT;
 	}
 
-	lognormal($slaveid, "(job:$jobid/$jobmax) $action \@$host: $command");
+	lognormal($tag, "(job:$jobid/$jobmax) $action \@$host: $command");
 	if (defined $outhandle) {
 		print $outhandle "# $action \@$host: $command\n";
 	}
 	if ($pingtimeout > 0) {
-		logdetail($slaveid, "Pinging $host");
-		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $slaveid, "ping(8) \@$host");
+		logdetail($tag, "Pinging $host");
+		($status, $duration) = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $tag, "ping(8) \@$host");
 		if ($status != 0) {
-			logerror($slaveid, "Cannot ping '$host'");
+			logerror($tag, "Cannot ping '$host'");
 			goto OUT;
 		}
 	}
@@ -519,10 +522,10 @@ sub dojob {
 		$localfile .= ".$host";
 
 		if (not $dir) { $dir = '.' }
-		logdetail($slaveid, "Pulling '$command' from $host into $dir/$localfile");
-		($status, $duration) = timedrun($scptimeout, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $slaveid, "scp(1) \@$host");
+		logdetail($tag, "Pulling '$command' from $host into $dir/$localfile");
+		($status, $duration) = timedrun($scptimeout, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $tag, "scp(1) \@$host");
 		if ($status != 0) {
-			logerror($slaveid, "Cannot pull '$command' to $host");
+			logerror($tag, "Cannot pull '$command' to $host");
 		}
 		goto OUT;
 	}
@@ -541,10 +544,10 @@ sub dojob {
 		} else {
 			$remotefile = "./$remotefile";
 		}
-		logdetail($slaveid, "Pushing '$localfile' to $host as '$remotefile'");
-		($status, $duration) = timedrun($scptimeout, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $slaveid, "scp(1) \@$host");
+		logdetail($tag, "Pushing '$localfile' to $host as '$remotefile'");
+		($status, $duration) = timedrun($scptimeout, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $tag, "scp(1) \@$host");
 		if ($status != 0) {
-			logerror($slaveid, "Cannot push '$localfile' to $host");
+			logerror($tag, "Cannot push '$localfile' to $host");
 			goto OUT;
 		}
 
@@ -558,14 +561,14 @@ sub dojob {
 	if ($dir) { $realcommand = "cd $dir; $realcommand" }
 
 	$realcommand = escape($realcommand);
-	logdetail($slaveid, "Running command");
-	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $slaveid, "Command \@$host");
+	logdetail($tag, "Running command");
+	($status, $duration) = timedrun($timeout, "$sshcmd $ssh_user\@$host $realcommand", $tag, "Command \@$host");
 
 	if ($status < 0) { goto OUT }
 	if ($status > 0) {
-		logerror($slaveid, "Command \@$host returned status $status after ${duration} sec");
+		logerror($tag, "Command \@$host returned status $status after ${duration} sec");
 	} else {
-		logdetail($slaveid, "Command \@$host returned successfully after ${duration} sec");
+		logdetail($tag, "Command \@$host returned successfully after ${duration} sec");
 	}
 
 OUT:
