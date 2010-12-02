@@ -28,9 +28,10 @@ Usage:
 * Common options:
     -l <logdir>	 Logs everything in <logdir>/ (will be created)
     -n <number>	 Number of commands to run simultaneously, default: 1
-    -q		 Be quiet, that is don't issue command output on terminal
+    -q           Be quiet, that is don't issue command output on terminal
     -t <seconds> Timeout when running a command, default: 120
-    -v		 Show command output on terminal
+    -T           Do not tag log lines with the host being processed
+    -v           Show command output on terminal
 
 * Remote command options:
     -C <seconds> Connect timeout for ssh/scp, default: 10
@@ -187,6 +188,7 @@ use Job::Timed;
 my $parallelism = 1; 
 my $verbose = 0;
 my $quiet = 0;
+my $hosttag = 1;
 my $pingtimeout = 5;
 my $scptimeout = 30;
 my $timeout = 120;
@@ -212,6 +214,7 @@ GetOptions(
 	'l=s' => \$logdir,
 	'v' => \$verbose,
 	'q' => \$quiet,
+	'T' => \$hosttag,
 	'n=i' => \$parallelism,
 	'p=i' => \$pingtimeout,
 	't=i' => \$timeout,
@@ -457,6 +460,7 @@ sub escape {
 #
 sub dojob {
 	my ($slaveid, $jobid, $job, $jobmax) = @_;
+	my $where = $job->{'where'};
 	my $action = $job->{'action'};
 	my $command = $job->{'command'};
 	my $host = $job->{'host'};
@@ -468,7 +472,7 @@ sub dojob {
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
 
 	$tag = sprintf ("%0*d", $precision, $slaveid);
-	if ($host) { $tag = "$tag:$host" }
+	if ($hosttag and $host) { $tag = "$tag:$host" }
 
 	if ($logdir) {
 		my $logfile = $host ? $host : $jobid;
@@ -488,7 +492,7 @@ sub dojob {
 	}
 
 	# Local run is straightforward.
-	if (not $host) {
+	if ($where eq 'local') {
 		# Sanity checks after the parser ensured that the action is 'exec'.
 		lognormal($tag, "(job:$jobid/$jobmax) exec local: $command");
 		if (defined $outhandle) {
@@ -763,9 +767,10 @@ if (@hosts > 0) {
 				my $job = {};
 				my $realcmd = $cmd;
 				$realcmd =~ s/$subst/$host/g;
+				$job->{'where'} = $where;
 				$job->{'action'} = $action;
 				$job->{'command'} = $realcmd;
-				$job->{'host'} = '';
+				$job->{'host'} = $host;
 				push @jobs, $job;
 			}
 		}
@@ -775,6 +780,7 @@ if (@hosts > 0) {
 				my $job = {};
 				my $realcmd = $cmd;
 				$realcmd =~ s/$subst/$host/g;
+				$job->{'where'} = $where;
 				$job->{'action'} = $action;
 				$job->{'command'} = $realcmd;
 				$job->{'host'} = $host;
