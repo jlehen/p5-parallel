@@ -200,7 +200,7 @@ my $logdir = '';
 my $loghandle;
 my $outhandle;
 my $failfile;
-my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0 -q';
+my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0';
 my $precision;
 my $os;
 my $pingcmd;
