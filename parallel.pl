@@ -1,10 +1,17 @@
 #!/usr/bin/perl -w
 #
-# 2008-2010 Jeremie Le Hen <jeremie.le-hen@sgcib.com>
+# 2008-2011 Jeremie Le Hen <jeremie.le-hen@sgcib.com>
 #
 # Based on multremsh.pl:
 # 2004 Vincent Haverlant <vincent.haverlant@sgcib.com> 
 # $Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $
+
+# Put there variables here as they are used in usage().
+my $parallelism = 5; 
+my $pingtimeout = 5;
+my $scptimeout = 60;
+my $timeout = 300;
+my $connecttimeout = 10;
 
 sub usage {
 	my $me = $0;
@@ -27,17 +34,17 @@ Usage:
 
 * Common options:
     -l <logdir>	 Logs everything in <logdir>/ (will be created)
-    -n <number>	 Number of commands to run simultaneously, default: 1
+    -n <number>	 Number of commands to run simultaneously, default: $parallelism
     -q           Be quiet, that is don't issue command output on terminal
-    -t <seconds> Timeout when running a command, default: 120
+    -t <seconds> Timeout when running a command, default: $timeout
     -T           Do not tag log lines with the host being processed
     -v           Show command output on terminal
 
 * Remote command options:
-    -C <seconds> Connect timeout for ssh/scp, default: 10
+    -C <seconds> Connect timeout for ssh/scp, default: $connecttimeout
     -k <keyfile> Use <keyfile> when using ssh
-    -p <seconds> Ping timeout when testing host, disable with 0, default: 5
-    -S <seconds> Timeout when scp'ing a file, default: 30
+    -p <seconds> Ping timeout when testing host, disable with 0, default: $pingtimeout
+    -S <seconds> Timeout when scp'ing a file, default: $scptimeout
     -u <user>	 Use <user> when using ssh, default: \$LOGNAME
 
 * Local command options:
@@ -185,14 +192,9 @@ use Job::Parallel;
 use Job::Timed;
 
 # Initialisation and default values
-my $parallelism = 1; 
 my $verbose = 0;
 my $quiet = 0;
 my $hosttag = 1;
-my $pingtimeout = 5;
-my $scptimeout = 30;
-my $timeout = 120;
-my $connecttimeout = 10;
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
 my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
