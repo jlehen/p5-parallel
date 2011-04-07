@@ -48,7 +48,8 @@ Usage:
     -u <user>	 Use <user> when using ssh, default: \$LOGNAME
 
 * Local command options:
-    -s <string>	 Substitute <string> for each host, default: %ARG%
+    -s <string>	 Substitute <string> in the command string with the current
+                 hostname, default: %ARG%
 
 * Notes:
     For each <file>/<command> or <host> parameter, you can use either "-" to
@@ -400,7 +401,7 @@ sub pipedrun {
 	}
 
 	if (not defined $status) {
-		logerror($tag, "WEIRD BEHAVIOUR DETECTED, child PID $pid vanished (zombies seen: @zombies)");
+		logerror($tag, "WEIRD BEHAVIOUR DETECTED, child PID $pid vanished (reaped zombies: @zombies)");
 		$status = $laststatus;
 	}
 
@@ -457,9 +458,6 @@ sub escape {
 }
 
 
-# If 'host' is false, then this is a local job.
-#
-#
 sub dojob {
 	my ($slaveid, $jobid, $job, $jobmax) = @_;
 	my $where = $job->{'where'};
