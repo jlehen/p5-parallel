@@ -34,6 +34,7 @@ Usage:
 
 * Common options:
     -l <logdir>	 Logs everything in <logdir>/ (will be created)
+    -a           Append to log files.
     -n <number>	 Number of commands to run simultaneously, default: $parallelism
     -q           Be quiet, that is don't issue command output on terminal
     -t <seconds> Timeout when running a command, default: $timeout
@@ -60,9 +61,9 @@ Usage:
 
     When using the -l option, two files are created by commands:
       .log file contains parallel.pl messages and command stdout/stderr;
-      .out file contains command stdout/stderr;
-    Also, a .fail file exists if the command failed somewhere.  It contains
-    the reason of the failure.
+      .out file contains command stdout/stderr.
+    If the if the command failed somewhere, the following file is created:
+      .fail file contains the reason of the failure.
 EOF
 	exit 0;
 }
@@ -196,6 +197,7 @@ use Job::Timed;
 my $verbose = 0;
 my $quiet = 0;
 my $hosttag = 1;
+my $appendlog = 0;
 my $ssh_user = $ENV{'LOGNAME'};
 my $ssh_keyfile;
 my $subst = $ENV{'SUBST'} ? quotemeta ($ENV{'SUBST'}) : '\%ARG\%';
@@ -214,6 +216,7 @@ $|=1;
 
 Getopt::Long::Configure qw(posix_default require_order bundling no_ignore_case);
 GetOptions(
+	'a' => \$appendlog,
 	'l=s' => \$logdir,
 	'v' => \$verbose,
 	'q' => \$quiet,
@@ -263,7 +266,7 @@ sub printlog {
 	# Late creation of the fail file on error.
 	if ($level < 0 and $logdir) {
 		my $failhandle;
-		if (open $failhandle, '>>', $failfile) {
+		if (open $failhandle, '>', $failfile) {
 			print $failhandle "$now ($tag) $text\n";
 			close $failhandle;
 		}
@@ -303,7 +306,11 @@ sub logoutput {
 #
 # This function creates 2 pipes, forks and sets them as stdout and stderr
 # before running the child.  The parent process reads the pipes and writes
-# it to the log.  The return value is the exit status of the executed command.
+# it to the log.
+# The return value is a list composed of:
+# - the exit status of the executed command
+# - the runtime of the command
+# - the number of lui
 sub pipedrun {
 	my ($timer, $command, $tag, $descwhat) = @_;
 
@@ -476,12 +483,22 @@ sub dojob {
 
 	if ($logdir) {
 		my $logfile = $host ? $host : $jobid;
+		my $mode = '>';
 
-		if (not open $loghandle, '>>', "$logdir/$logfile.log") {
+		if (-f "$logdir/$logfile.fail") { unlink  "$logdir/$logfile.fail" }
+		if ($appendlog) {
+			$mode = ">>";
+		}else {
+			# Don't care if they do not exist.
+			unlink  "$logdir/$logfile.log";
+			unlink  "$logdir/$logfile.out";
+		}
+
+		if (not open $loghandle, $mode, "$logdir/$logfile.log") {
 			logerror($tag, "Cannot open '$logdir/$logfile.log' for writing: $!");
 			goto OUT;
 		}
-		if (not open $outhandle, '>>', "$logdir/$logfile.out") {
+		if (not open $outhandle, $mode, "$logdir/$logfile.out") {
 			logerror($tag, "Cannot open '$logdir/$logfile.out' for writing: $!");
 			goto OUT;
 		}
