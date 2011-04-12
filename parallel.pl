@@ -65,6 +65,11 @@ Usage:
       .out file contains command stdout/stderr.
     If the if the command failed somewhere, the following file is created:
       .fail file contains the reason of the failure.
+
+    A status of "-" means that an error occured, but coming from $me\'s
+    internals instead of the program intended to run.  This includes a
+    failed ping(8) or scp(8).  If you want to know what's happened, you
+    have to either look at the .log file if -l was used or use -vv.
 EOF
 	exit 0;
 }
@@ -207,7 +212,7 @@ my $logdir = '';
 my $loghandle;
 my $outhandle;
 my $failfile;
-my $ssh_opts = '-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0';
+my $ssh_opts = '-o BatchMode=yes -o StrictHostKeyChecking=no -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0';
 my $mode = '>';
 my $precision;
 my $os;
@@ -310,10 +315,16 @@ sub logoutput {
 # This function creates 2 pipes, forks and sets them as stdout and stderr
 # before running the child.  The parent process reads the pipes and writes
 # it to the log.
-# The return value is a list composed of:
-# - the exit status of the executed command
-# - the number of output (stdout/stderr) lines
-# - the last output line
+#
+# Returns a list reference [ $status, $elapsed, $linecount, $lastline ].
+#
+# $status is always defined.  If we cannot fork, then the $status will
+# be 999 and the appropriate log is issued; also, $linecount is set to 0
+# and $lastline contains the error message, so it can be displayed in
+# the summary.
+#
+# For pratical reasons, if the command died because of a signal, $status
+# will be "sig".$signal.
 sub pipedrun {
 	my ($timer, $command, $tag, $descwhat) = @_;
 	my ($linecount, $lastline);
@@ -327,8 +338,9 @@ sub pipedrun {
 	my $errpipe = new IO::Pipe;
 	my $pid = fork;
 	if (not defined $pid) {
-		logerror($tag, "Cannot fork: $!");
-		return (300, 0, 0, '');
+		$lastline = "Cannot fork: $!";
+		logerror($tag, $lastline);
+		return (999, 0, 0, $lastline);
 	}
 	if ($pid == 0) {
 		$outpipe->writer();
@@ -387,13 +399,13 @@ sub pipedrun {
 				}
 				$linecount++;
 				$lastline = "$pfx$line";
-				logoutput($tag, "$pfx$line");
+				logoutput($tag, $lastline);
 			}
 			# Better log a half line than lose it.
 			if (defined $halfline) {
 				$linecount++;
-				$lastline = "$pfx$line";
-				logoutput($tag, "$pfx$halfline");
+				$lastline = "$pfx$halfline";
+				logoutput($tag, $lastline);
 				$halfline = undef;
 			}
 		}
@@ -427,15 +439,19 @@ sub pipedrun {
 	my $elapsed = sprintf ("%.3f", tv_interval($tv0));
 	if ($status & 127) {
 		logerror($tag, "$descwhat killed with signal ".($status & 127));
-		return (-1, $elapsed, $linecount, $lastline);;
+		return [ "sig".($status & 127), $elapsed, $linecount, $lastline ];
 	}
 	return [ $status >> 8, $elapsed, $linecount, $lastline ];
 }
 
 
-# Returns a list ($status, $duration).
-# $status is always defined.  If it is negative, then the appropriate
-# log has already been issued.
+#
+# Returns a list reference [ $status, $elapsed, $linecount, $lastline ].
+#
+# $status is always defined.  If Job::Timed::runSubr() returns an interal
+# error, then $status will be 999 and the appropriate log is issued;
+# also, $linecount is set to 0 and $lastline contains the error message,
+# so it can be displayed in the summary.
 sub timedrun {
 	my ($timer, $command, $tag, $descwhat) = @_;
 	my ($result, $status, $elapsed, $lastline);
@@ -454,19 +470,18 @@ sub timedrun {
 	}
 	$status = $error;
 
-	# if ($error == -1), then log message already issued
-	if ($error == -2) {
-		$lastline = "$descwhat exhausted its allocated time (${elapsed}s)";
-		logerror($tag, $lastline);
-	} elsif ($error == -3) {
-		$lastline = "$descwhat as been interrupted after (${elapsed}s)";
-		logerror($tag, $lastline);
-	} else {
+	if ($error == -1) {
 		$lastline = "Job::Timed::runSubr: ".Job::Timed::error().
 		    " (after ${elapsed}s)";
 		logerror($tag, $lastline);
+	} elsif ($error == -2) {
+		$lastline = "$descwhat exhausted its allocated time (${elapsed}s)";
+		logerror($tag, $lastline);
+	} elsif ($error == -3) {
+		$lastline = "$descwhat as been interrupted after ${elapsed}s";
+		logerror($tag, $lastline);
 	}
-	return [ $status, $elapsed, 0, $lastline ];
+	return [ 999, $elapsed, 0, $lastline ];
 }
 
 
@@ -479,7 +494,8 @@ sub escape {
 	return $s;
 }
 
-
+#
+# This function contains the intelligence.
 sub dojob {
 	my ($slaveid, $jobid, $job, $jobmax) = @_;
 	my $where = $job->{'where'};
@@ -489,10 +505,12 @@ sub dojob {
 	my $dir = $job->{'dir'};
 	my ($result, $status, $duration, $linecount, $lastline);
 	my $realcommand;
+	my $savedhandle;
 	my $tag;
 
 	$SIG{'INT'} = $SIG{'TERM'} = \&Job::Timed::terminate;
 
+	$duration = 0;
 	$linecount = 0;
 	$lastline = '';
 
@@ -510,11 +528,15 @@ sub dojob {
 		}
 
 		if (not open $loghandle, $mode, "$logdir/$logfile.log") {
-			logerror($tag, "Cannot open '$logdir/$logfile.log' for writing: $!");
+			$status = 999;
+			$lastline = "Cannot open '$logdir/$logfile.log' for writing: $!";
+			logerror($tag, $lastline);
 			goto OUT;
 		}
 		if (not open $outhandle, $mode, "$logdir/$logfile.out") {
-			logerror($tag, "Cannot open '$logdir/$logfile.out' for writing: $!");
+			$status = 999;
+			$lastline = "Cannot open '$logdir/$logfile.out' for writing: $!";
+			logerror($tag, $lastline);
 			goto OUT;
 		}
 		$failfile = "$logdir/$logfile.fail";
@@ -531,10 +553,7 @@ sub dojob {
 			print $outhandle "# exec local: $command\n";
 		}
 		$result = timedrun($timeout, $command, $tag, "Command");
-		$status = $result->[0];
-		$duration = $result->[1];
-		$linecount = $result->[2];
-		$lastline = $result->[3];
+		($status, $duration, $linecount, $lastline) = @$result;
 		if (defined $outhandle) {
 			print $outhandle "# exec local: status: $status; duration: ${duration}s; output: $linecount lines\n";
 		}
@@ -547,14 +566,20 @@ sub dojob {
 	}
 
 	lognormal($tag, "(job:$jobid/$jobmax) $action \@$host: $command");
-	if (defined $outhandle) {
-		print $outhandle "# $action \@$host: $command\n";
-	}
+
+	# We don't want to saved ping(8) or scp(8) output into the .out file.
+	$savedhandle = $outhandle;
+	$outhandle = undef;
+
 	if ($pingtimeout > 0) {
 		logdetail($tag, "Pinging $host");
-		$result = timedrun($pingtimeout, "$pingcmd $host >/dev/null 2>&1", $tag, "ping(8) \@$host");
+		# Don't log this in the output file.
+		$result = timedrun($pingtimeout, "$pingcmd $host", $tag, "ping(8) \@$host");
+		$status = $result->[0];
 		if ($status != 0) {
-			logerror($tag, "Cannot ping '$host'");
+			$status = 999;
+			$lastline = "Cannot ping '$host'";
+			logerror($tag, $lastline);
 			goto OUT;
 		}
 	}
@@ -569,8 +594,11 @@ sub dojob {
 		if (not $dir) { $dir = '.' }
 		logdetail($tag, "Pulling '$command' from $host into $dir/$localfile");
 		$result = timedrun($scptimeout, "$scpcmd $ssh_user\@$host:$command $dir/$localfile", $tag, "scp(1) \@$host");
+		$status = $result->[0];
 		if ($status != 0) {
-			logerror($tag, "Cannot pull '$command' to $host");
+			$status = 999;
+			$lastline = "Cannot pull '$command' to $host";
+			logerror($tag, $lastline);
 		}
 		goto OUT;
 	}
@@ -591,8 +619,11 @@ sub dojob {
 		}
 		logdetail($tag, "Pushing '$localfile' to $host as '$remotefile'");
 		$result = timedrun($scptimeout, "$scpcmd $localfile $ssh_user\@$host:$remotefile", $tag, "scp(1) \@$host");
+		$status = $result->[0];
 		if ($status != 0) {
-			logerror($tag, "Cannot push '$localfile' to $host");
+			$status = 999;
+			$lastline = "Cannot push '$localfile' to $host";
+			logerror($tag, $lastline);
 			goto OUT;
 		}
 
@@ -603,6 +634,12 @@ sub dojob {
 		$realcommand = "chmod +x $remotefile; $remotefile $realcommand; rm -f $remotefile";
 	}
 
+	$outhandle = $savedhandle;
+	$savedhandle = undef;
+
+	if (defined $outhandle) {
+		print $outhandle "# $action \@$host: $command\n";
+	}
 	if ($dir) { $realcommand = "cd $dir; $realcommand" }
 
 	$realcommand = escape($realcommand);
@@ -624,6 +661,7 @@ sub dojob {
 	}
 
 OUT:
+	if (defined $savedhandle) { $outhandle = $savedhandle }
 	if (defined $loghandle) { close $loghandle }
 	if (defined $outhandle) { close $outhandle }
 	return [ $host ? $host : $jobid, $status, $duration, $linecount, $lastline ];
@@ -855,9 +893,10 @@ if (@hosts > 0) {
 	}
 }
 
+Job::Parallel::setDebug(0x7);
 $SIG{'INT'} = $SIG{'TERM'} = sub {
 	Job::Parallel::terminate();
-	if (!Job::Parallel::isChild()) { exit 0 }
+	#if (not Job::Parallel::isChild()) { exit 0 }
 };
 
 my @results = Job::Parallel::run($parallelism, \&dojob, scalar (@jobs), @jobs);
@@ -872,6 +911,14 @@ my $hostsize = 7; # length("Host/Id") == 7
 foreach my $r (@results) {
 	if (length ($r->[0]) > $hostsize) { $hostsize = length ($r->[0]) }
 	$results{$r->[0]} = $r;
+}
+
+# Try to determine terminal width.
+my $width = 80;
+require 'sys/ioctl.ph';
+my $winsize;
+if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
+	$width = (unpack ('S4', $winsize))[1];
 }
 
 my @order;
@@ -890,19 +937,22 @@ if ($logdir) {
 }
 
 print "\n";
-my $line = sprintf("%-*s  %4s  %7s  %7s  %-s\n",
+my $line = sprintf("%-*s  %5s  %7s  %7s  %-s\n",
     $hostsize, "Host/Id", "Exit", "Runtime", "# Lines", "Last line");
-my $linesize = 79 - $hostsize - 2 - 4 - 2 - 7 - 2 - 7 - 2;
+my $linesize = $width - $hostsize - 2 - 5 - 2 - 7 - 2 - 7 - 2;
 if (defined $loghandle) { print $loghandle $line }
 if ($summary) { print $line }
-$line = ("-" x 79) . "\n";
+$line = ("-" x ($width - 1)) . "\n";
 if (defined $loghandle) { print $loghandle $line }
 if ($summary) { print $line }
 
 foreach $i (@order) {
 	my $r = $results{$i};
-	$line = sprintf("%-*s  %4s  %7s  %7s  %-*s\n",
-	    $hostsize, $i, $r->[1], $r->[2], $r->[3],
+	if (not defined $r) { next } # We've been interrupted
+	my $s = $r->[1];
+	if ($s == 999) { $s = "-" }
+	$line = sprintf("%-*s  %5s  %7s  %7s  %-*s\n",
+	    $hostsize, $i, $s, $r->[2], $r->[3],
 	    $linesize, substr ($r->[4], 0, $linesize));
 	if (defined $loghandle) { print $loghandle $line }
 	if ($summary) { print $line }
