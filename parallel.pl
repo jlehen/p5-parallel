@@ -66,10 +66,13 @@ Usage:
     If the if the command failed somewhere, the following file is created:
       .fail file contains the reason of the failure.
 
+* Summary:
     A status of "-" means that an error occured, but coming from $me\'s
-    internals instead of the program intended to run.  This includes a
-    failed ping(8) or scp(8).  If you want to know what's happened, you
-    have to either look at the .log file if -l was used or use -vv.
+    internals instead of the program intended to run.  In that case, the
+    line count in 0 and the last line field is the error.  This includes a
+    failed ping(8) or scp(8).  If you want to know what's happened with
+    these commands, you have to either look at the .log file if -l was used
+    or use -vv.
 EOF
 	exit 0;
 }
@@ -319,9 +322,12 @@ sub logoutput {
 # Returns a list reference [ $status, $elapsed, $linecount, $lastline ].
 #
 # $status is always defined.  If we cannot fork, then the $status will
-# be 999 and the appropriate log is issued; also, $linecount is set to 0
-# and $lastline contains the error message, so it can be displayed in
-# the summary.
+# be 999 and the appropriate log is issued; if the command has been killed with
+# a signal, then $status is 1000 + signum.  Also, $linecount is set to 0 and
+# $lastline contains the error message, so it can be displayed in the summary.
+#
+# If the command has been killed with a signal, then $status is
+# 1000 + signum.
 #
 # For pratical reasons, if the command died because of a signal, $status
 # will be "sig".$signal.
@@ -439,7 +445,7 @@ sub pipedrun {
 	my $elapsed = sprintf ("%.3f", tv_interval($tv0));
 	if ($status & 127) {
 		logerror($tag, "$descwhat killed with signal ".($status & 127));
-		return [ "sig".($status & 127), $elapsed, $linecount, $lastline ];
+		return [ 1000 + ($status & 127), $elapsed, $linecount, $lastline ];
 	}
 	return [ $status >> 8, $elapsed, $linecount, $lastline ];
 }
@@ -893,7 +899,6 @@ if (@hosts > 0) {
 	}
 }
 
-Job::Parallel::setDebug(0x7);
 $SIG{'INT'} = $SIG{'TERM'} = sub {
 	Job::Parallel::terminate();
 	#if (not Job::Parallel::isChild()) { exit 0 }
@@ -951,6 +956,7 @@ foreach $i (@order) {
 	if (not defined $r) { next } # We've been interrupted
 	my $s = $r->[1];
 	if ($s == 999) { $s = "-" }
+	elsif ($s >= 1000) { $s = "sig" . ($s - 1000) }
 	$line = sprintf("%-*s  %5s  %7s  %7s  %-*s\n",
 	    $hostsize, $i, $s, $r->[2], $r->[3],
 	    $linesize, substr ($r->[4], 0, $linesize));
