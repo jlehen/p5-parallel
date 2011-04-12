@@ -403,6 +403,8 @@ sub pipedrun {
 					$halfline = $line;
 					next;
 				}
+				# XXX Quite ugly, but sometimes needed.
+				$line =~ s/[\r]$//;
 				$linecount++;
 				$lastline = "$pfx$line";
 				logoutput($tag, $lastline);
