@@ -922,7 +922,11 @@ foreach my $r (@results) {
 
 # Try to determine terminal width.
 my $width = 80;
-require 'sys/ioctl.ph';
+{
+	# XXX This is too ugly.  Thanks Perl!
+	local $SIG{__WARN__} = sub {};
+	require 'sys/ioctl.ph';
+}
 my $winsize;
 if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
 	$width = (unpack ('S4', $winsize))[1];
