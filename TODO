@@ -1,0 +1,4 @@
+- Create a .running file for each server and delete it afterward
+- Change the name of intermediate processes in Job::
+- Do not unlink the log/out/fail files when there are multiple commands in the same run
+- Do not use ssh -n.
