@@ -506,6 +506,7 @@ sub escape {
 # This function contains the intelligence.
 sub dojob {
 	my ($slaveid, $jobid, $job, $jobmax) = @_;
+	my $cmdid = $job->{'cmdid'};
 	my $where = $job->{'where'};
 	my $action = $job->{'action'};
 	my $command = $job->{'command'};
@@ -672,7 +673,7 @@ OUT:
 	if (defined $savedhandle) { $outhandle = $savedhandle }
 	if (defined $loghandle) { close $loghandle }
 	if (defined $outhandle) { close $outhandle }
-	return [ $host ? $host : $jobid, $status, $duration, $linecount, $lastline ];
+	return [ $host ? $host : "", $cmdid, $status, $duration, $linecount, $lastline ];
 }
 
 
@@ -859,12 +860,15 @@ my @jobs;
 if (@hosts > 0) {
 	my %job = ();
 
+	$i = 0;
 	if ($where eq 'local') {	# Substitution
 		foreach my $cmd (@commands) {
+			$i++;
 			foreach my $host (@hosts) {
 				my $job = {};
 				my $realcmd = $cmd;
 				$realcmd =~ s/$subst/$host/g;
+				$job->{'cmdid'} = $i;
 				$job->{'where'} = $where;
 				$job->{'action'} = $action;
 				$job->{'command'} = $realcmd;
@@ -874,10 +878,12 @@ if (@hosts > 0) {
 		}
 	} else {			# 'remote', Combination
 		foreach my $cmd (@commands) {
+			$i++;
 			foreach my $host (@hosts) {
 				my $job = {};
 				my $realcmd = $cmd;
 				$realcmd =~ s/$subst/$host/g;
+				$job->{'cmdid'} = $i;
 				$job->{'where'} = $where;
 				$job->{'action'} = $action;
 				$job->{'command'} = $realcmd;
@@ -892,8 +898,11 @@ if (@hosts > 0) {
 		die 'ASSERTION FAILED: remote command with no hosts';
 	}
 	
+	$i = 0;
 	foreach my $cmd (@commands) {
 		my $job = {};
+		$i++;
+		$job->{'cmdid'} = $i;
 		$job->{'action'} = $action;
 		$job->{'command'} = $cmd;
 		$job->{'host'} = '';
@@ -906,6 +915,7 @@ $SIG{'INT'} = $SIG{'TERM'} = sub {
 	#if (not Job::Parallel::isChild()) { exit 0 }
 };
 
+# Results in an array of [ $host , $cmdid, $status, $duration, $linecount, $lastline ]
 my @results = Job::Parallel::run($parallelism, \&dojob, scalar (@jobs), @jobs);
 
 if (not defined $results[0]) {
@@ -913,13 +923,21 @@ if (not defined $results[0]) {
 }
 if (not $logdir and not $summary) { exit 0 }
 
+#
+# Compute "Host/Id" column size and structurize results.
 my %results;
-my $hostsize = 7; # length("Host/Id") == 7
+my $hostsize = 4;	# length("Host") == 4
+my $idsize = 2;		# length("Id") == 2
 foreach my $r (@results) {
-	if (length ($r->[0]) > $hostsize) { $hostsize = length ($r->[0]) }
-	$results{$r->[0]} = $r;
+	my ($host, $id) = ($r->[0], $r->[1]);
+	if (length ($host) > $hostsize) { $hostsize = length ($host) }
+	if (length ($id) > $idsize) { $idsize = length ($id) }
+
+	if (not defined $results{$host}) { $results{$host} = {} }
+	$results{$host}->{$id} = $r;
 }
 
+#
 # Try to determine terminal width.
 my $width = 80;
 {
@@ -932,11 +950,11 @@ if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
 	$width = (unpack ('S4', $winsize))[1];
 }
 
-my @order;
+my @hostorder;
 if (@hosts > 0) {
-	@order = @hosts;
+	@hostorder = @hosts;		# Keep order given by user.
 } else {
-	@order = sort (keys %results);
+	@hostorder = keys %results;	# There should be only one: "".
 }
 
 if ($logdir) {
@@ -948,26 +966,53 @@ if ($logdir) {
 }
 
 print "\n";
-my $line = sprintf("%-*s  %5s  %7s  %7s  %-s\n",
-    $hostsize, "Host/Id", "Exit", "Runtime", "# Lines", "Last line");
-my $linesize = $width - $hostsize - 2 - 5 - 2 - 7 - 2 - 7 - 2;
+my $line;
+my $linesize;
+if (@hosts > 0 && @commands > 1) {
+	$line = sprintf("%*s/%-*s  %5s  %7s  %7s  %-s\n",
+	    $hostsize, "Host", $idsize, "Id", "Exit", "Runtime", "# Lines", "Last line");
+	$linesize = $width - ($hostsize - 1 - $idsize) - 2 - 5 - 2 - 7 - 2 - 7 - 2 - 1;
+} elsif (@hosts > 0 && @commands == 1) {
+	$line = sprintf("%-*s  %5s  %7s  %7s  %-s\n",
+	    $hostsize, "Host",  "Exit", "Runtime", "# Lines", "Last line");
+	$linesize = $width - $hostsize - 2 - 5 - 2 - 7 - 2 - 7 - 2;
+} elsif (@hosts == 0 && @commands > 1) {
+	$line = sprintf("-*s  %5s  %7s  %7s  %-s\n",
+	    $idsize, "Id", "Exit", "Runtime", "# Lines", "Last line");
+	$linesize = $width - $idsize - 2 - 5 - 2 - 7 - 2 - 7 - 2;
+}
+
 if (defined $loghandle) { print $loghandle $line }
 if ($summary) { print $line }
 $line = ("-" x ($width - 1)) . "\n";
 if (defined $loghandle) { print $loghandle $line }
 if ($summary) { print $line }
 
-foreach $i (@order) {
-	my $r = $results{$i};
-	if (not defined $r) { next } # We've been interrupted
-	my $s = $r->[1];
-	if ($s == 999) { $s = "-" }
-	elsif ($s >= 1000) { $s = "sig" . ($s - 1000) }
-	$line = sprintf("%-*s  %5s  %7s  %7s  %-*s\n",
-	    $hostsize, $i, $s, $r->[2], $r->[3],
-	    $linesize, substr ($r->[4], 0, $linesize));
-	if (defined $loghandle) { print $loghandle $line }
-	if ($summary) { print $line }
+foreach my $host (@hostorder) {
+	for my $id (sort keys %{$results{$host}}) {
+		my $result = $results{$host}->{$id};
+		if (not defined $result) { next } # We've been interrupted
+		my $status = $result->[2];
+		if ($status == 999) { $status = "-" }
+		elsif ($status >= 1000) { $status = "sig" . ($status - 1000) }
+
+		if (@hosts > 0 && @commands > 1) {
+			$line = sprintf("%*s/%-*s  %5s  %7s  %7s  %s\n",
+			    $hostsize, $host, $idsize, $id, $status, $result->[3], $result->[4],
+			    substr ($result->[5], 0, $linesize));
+		} elsif (@hosts > 0 && @commands == 1) {
+			$line = sprintf("%-*s  %5s  %7s  %7s  %s\n",
+			    $hostsize, $host, $status, $result->[3], $result->[4],
+			    substr ($result->[5], 0, $linesize));
+		} elsif (@hosts == 0 && @commands > 1) {
+			$line = sprintf("%-*s  %5s  %7s  %7s  %s\n",
+			    $idsize, $id, $status, $result->[3], $result->[4],
+			    substr ($result->[5], 0, $linesize));
+		}
+		if (defined $loghandle) { print $loghandle $line }
+		if ($summary) { print $line }
+	}
 }
+
 
 if (defined $loghandle) { close $loghandle }
