@@ -246,7 +246,7 @@ GetOptions(
 
 $os = `uname -s`;
 chomp $os;
-$pingcmd = 'ping -c 1';
+$pingcmd = 'ping -c 2';
 if ($os eq 'SunOS') { $pingcmd = 'ping' }
 
 if ($ssh_keyfile) { $ssh_opts .= ' -i '.$ssh_keyfile }
