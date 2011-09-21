@@ -41,6 +41,7 @@ Usage:
     -T           Do not tag log lines with the host being processed
     -U           Do not issue a summary upon completion (still logged if -l)
     -v           Increase verbosity (use twice to show command output).
+    -W <size>    Set window width (for summary)
 
 * Remote command options:
     -C <seconds> Connect timeout for ssh/scp, default: $connecttimeout
@@ -222,6 +223,7 @@ my $os;
 my $pingcmd;
 my $sshcmd;
 my $scpcmd;
+my $width;
 
 $|=1;
 
@@ -241,6 +243,7 @@ GetOptions(
 	'u=s' => \$ssh_user,
 	'k=s' => \$ssh_keyfile,
 	's=s' => \$subst,
+	'W=i' => \$width,
 	'h' => \&usage,
 ) or (die $!);
 
@@ -939,15 +942,17 @@ foreach my $r (@results) {
 
 #
 # Try to determine terminal width.
-my $width = 80;
-{
-	# XXX This is too ugly.  Thanks Perl!
-	local $SIG{__WARN__} = sub {};
-	require 'sys/ioctl.ph';
-}
-my $winsize;
-if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
-	$width = (unpack ('S4', $winsize))[1];
+if (not defined $width) {
+	$width = 80;
+	{
+		# XXX This is too ugly.  Thanks Perl!
+		local $SIG{__WARN__} = sub {};
+		require 'sys/ioctl.ph';
+	}
+	my $winsize;
+	if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
+		$width = (unpack ('S4', $winsize))[1];
+	}
 }
 
 my @hostorder;
