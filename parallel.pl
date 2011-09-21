@@ -195,14 +195,13 @@ use IO::Pipe;
 use IO::Select;
 
 my $dirname;
-BEGIN {
-	$dirname = $0;
-	$dirname =~ s{\/?[^/]+$}{};
-	if ($dirname eq '') { $dirname = '.' }
-}
-use lib $dirname;
-use Job::Parallel;
-use Job::Timed;
+$dirname = $0;
+$dirname =~ s{\/?[^/]+$}{};
+if ($dirname eq '') { $dirname = '.' }
+unshift @INC, $dirname;
+unshift @INC, "$dirname/p5-Job";
+if (not require Job::Parallel) { die "Cannot find Job::Parallel" }
+if (not require Job::Timed) { die "Cannot find Job::Timed" }
 
 # Initialisation and default values
 my $maxoutputlevel = 0;
@@ -947,11 +946,13 @@ if (not defined $width) {
 	{
 		# XXX This is too ugly.  Thanks Perl!
 		local $SIG{__WARN__} = sub {};
-		require 'sys/ioctl.ph';
+		eval "require 'sys/ioctl.ph'";
 	}
-	my $winsize;
-	if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
-		$width = (unpack ('S4', $winsize))[1];
+	if (not $@) {
+		my $winsize;
+		if (defined (&TIOCGWINSZ) and ioctl (STDOUT, (&TIOCGWINSZ), $winsize='')) {
+			$width = (unpack ('S4', $winsize))[1];
+		}
 	}
 }
 
