@@ -20,8 +20,11 @@ sub usage {
 	print <<EOF;
 Usage:
 
-* Detailled informations on each command:
-    $me help <'push'|'pull'|'exec'|'pushnexec'>
+* Detailled informations and example for each command:
+    $me help push
+    $me help pull
+    $me help exec
+    $me help pushnexec
 
 * Remote commands:
     $me [options] push <file> [in <dir>] on <host> [host ...]
@@ -55,19 +58,26 @@ Usage:
                  hostname, default: %ARG%
 
 * Notes:
+
+  Reading from stdin
     For each <file>/<command> or <host> parameter, you can use either "-" to
     read the list from stdin or "file:</path/to/file>" to read from a file
     directly.  In both case empty lines and comment lines (starting with #)
     will be skipped.  Obviously you cannot use "-" for both <file>/<command>
     and <host> simultaneously.
 
+  Commands
+    The syntax expect <command> to be passed as a single argument.  This means
+    that you must enclose it in quotes if it needs arguments.
+
+  Logfiles
     When using the -l option, two files are created by commands:
       .log file contains parallel.pl messages and command stdout/stderr;
       .out file contains command stdout/stderr.
     If the if the command failed somewhere, the following file is created:
       .fail file contains the reason of the failure.
 
-* Summary:
+  Status field in summary
     A status of "-" means that an error occured, but coming from $me\'s
     internals instead of the program intended to run.  In that case, the
     line count in 0 and the last line field is the error.  This includes a
@@ -152,7 +162,7 @@ Description:
   This string can be changed with the -s option.
 
 Examples:
-  $me -n 2 exec "echo -n "%ARG% is: "; uname -s" on host1 host2 host3 host4
+  $me -n 2 exec "echo -n '%ARG% is: '; uname -s" on host1 host2 host3 host4
 
   $me -n 2 exec "grep ^%ARG%: /etc:passwd" locally for root jlehen
 
