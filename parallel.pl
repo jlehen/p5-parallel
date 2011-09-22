@@ -267,8 +267,10 @@ $sshcmd = "ssh -n $ssh_opts";
 $scpcmd = "scp $ssh_opts";
 if ($appendlog) { $mode = '>>' }
 
-if ($logdir and not -d $logdir) {
-	if (not mkdir $logdir, 0700) {
+if ($logdir) {
+	if (-d $logdir) {
+		warn "Directory '$logdir' already exists, non-overwritten files will stay";
+	} elsif (not mkdir $logdir, 0700) {
 		die "Cannot create directory '$logdir': $!";
 	}
 }
