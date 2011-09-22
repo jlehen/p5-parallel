@@ -396,24 +396,26 @@ sub pipedrun {
 	my $status;
 	my $laststatus;
 	my @zombies = ();
-	# $halfline is used when we didn't get a full line.  So instead of
+	# %halfline is used when we didn't get a full line.  So instead of
 	# logging a halfline, buffer it and try to fetch the leftover.
-	my $halfline = undef;
+	# This is done for each filehandle.
+	my %halfline;
+	my $pfx;
 	while (1) {
 		my @ready = $select->can_read();
 		foreach my $fh (@ready) {
-			my $pfx = '';
+			$pfx = '';
 			my $line;
 			if ($fh == $errpipe) { $pfx = 'ERR: ' }
 			while (1) {
 				$line = <$fh>;
 				if (not defined $line) { last }
-				if (defined $halfline) {
-					$line = $halfline . $line;
-					$halfline = undef;
+				if (defined $halfline{$fh}) {
+					$line = $halfline{$fh} . $line;
+					$halfline{$fh} = undef;
 				}
 				if (not chomp $line) {
-					$halfline = $line;
+					$halfline{$fh} = $line;
 					next;
 				}
 				# XXX Quite ugly, but sometimes needed.
@@ -421,13 +423,6 @@ sub pipedrun {
 				$linecount++;
 				$lastline = "$pfx$line";
 				logoutput($tag, $lastline);
-			}
-			# Better log a half line than lose it.
-			if (defined $halfline) {
-				$linecount++;
-				$lastline = "$pfx$halfline";
-				logoutput($tag, $lastline);
-				$halfline = undef;
 			}
 		}
 		if ($lastturn) { last }
@@ -449,6 +444,16 @@ sub pipedrun {
 			$errpipe->close();
 			$lastturn = 1;
 			last;
+		}
+	}
+	# Better log a half line than lose it.
+	foreach my $fh ($outpipe, $errpipe) {
+		if ($fh == $errpipe) { $pfx = 'ERR: ' }
+		if (defined $halfline{$fh}) {
+			$linecount++;
+			$lastline = "$pfx$halfline{$fh}";
+			logoutput($tag, $lastline);
+			$halfline{$fh} = undef;
 		}
 	}
 
