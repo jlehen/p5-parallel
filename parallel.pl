@@ -214,6 +214,8 @@ if (not require Job::Parallel) { die "Cannot find Job::Parallel" }
 if (not require Job::Timed) { die "Cannot find Job::Timed" }
 
 # Initialisation and default values
+my @argv0 = @ARGV;
+my $argc_noopt = 0;
 my $maxoutputlevel = 0;
 my $hosttag = 1;
 my $appendlog = 0;
@@ -256,6 +258,7 @@ GetOptions(
 	'h' => \&usage,
 ) or (die $!);
 
+$argc_noopt = @ARGV;
 $os = `uname -s`;
 chomp $os;
 $pingcmd = 'ping -c 2';
@@ -980,12 +983,15 @@ if (@hosts > 0) {
 	@hostorder = keys %results;	# There should be only one: "".
 }
 
-if ($logdir) {
+if ($logdir && $summary) {
 	if (not $appendlog) { unlink "$logdir/SUMMARY" }
 	if (not open $loghandle, $mode, "$logdir/SUMMARY") {
 		logerror("summary", "Cannot open '$logdir/SUMMARY' for writing: $!");
 		if (not $summary) { exit 0 }
 	}
+	my $argc_opt = @argv0 - $argc_noopt;
+	print $loghandle "# $0 ".join (' ', @argv0[0..($argc_opt - 1)])."\n";
+	foreach (@argv0[$argc_opt..$#argv0]) { print $loghandle "#\t$_\n" }
 }
 
 print "\n";
