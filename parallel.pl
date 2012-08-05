@@ -1,10 +1,13 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 #
 # 2008-2012 Jeremie Le Hen <jeremie@le-hen.org>
 #
 # Based on multremsh.pl:
 # 2004 Vincent Haverlant <vincent.haverlant@sgcib.com> 
 # $Id: multremsh.pl 73 2007-11-12 13:12:23Z vhaverla $
+
+use strict;
+use warnings;
 
 # Put there variables here as they are used in usage().
 my $parallelism = 5; 
@@ -195,7 +198,6 @@ EOF
 	exit 0;
 }
 
-use strict;
 use Getopt::Long;
 use File::Basename;
 use Time::HiRes qw(gettimeofday tv_interval);
