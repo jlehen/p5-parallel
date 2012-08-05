@@ -1,0 +1,78 @@
+``parallel'' is a tool written in Perl to execute commands, push/pull files
+and push-then-execute files on a large number of servers through SSH.  It
+doesn't rely on an agent but obviously requires a "no password" SSH
+authentication.
+
+Cool features:
+- log everything in separate log file for each host;
+- summary table at the end of the run;
+- combine multiple commands on multiple hosts;
+
+
+
+Usage:
+
+* Detailled informations and example for each command:
+    parallel.pl help push
+    parallel.pl help pull
+    parallel.pl help exec
+    parallel.pl help pushnexec
+
+* Remote commands:
+    parallel.pl [options] push <file> [in <dir>] on <host> [host ...]
+    parallel.pl [options] pull <file> [from <dir>] on <host> [host ...]
+    parallel.pl [options] exec <command> [in <dir>] on <host> [host ...]
+    parallel.pl [options] pushnexec <command> [in <dir>] on <host> [host ...]
+
+* Local commands:
+    parallel.pl [options] exec <command> locally [for <host> [host ...]]
+
+* Common options:
+    -a           Append to log files.
+    -l <logdir>	 Logs everything in <logdir>/ (will be created)
+    -n <number>	 Number of commands to run simultaneously, default: 5
+    -q           Decrease verbosity (use once to show only errors).
+    -t <seconds> Timeout when running a command, default: 300
+    -T           Do not tag log lines with the host being processed
+    -U           Do not issue a summary upon completion (still logged if -l)
+    -v           Increase verbosity (use twice to show command output).
+    -W <size>    Set window width (for summary)
+
+* Remote command options:
+    -C <seconds> Connect timeout for ssh/scp, default: 10
+    -k <keyfile> Use <keyfile> when using ssh
+    -p <seconds> Ping timeout when testing host, disable with 0, default: 5
+    -S <seconds> Timeout when scp'ing a file, default: 60
+    -u <user>	 Use <user> when using ssh, default: $LOGNAME
+
+* Local command options:
+    -s <string>	 Substitute <string> in the command string with the current
+                 hostname, default: %ARG%
+
+* Notes:
+
+  Reading from stdin
+    For each <file>/<command> or <host> parameter, you can use either "-" to
+    read the list from stdin or "file:</path/to/file>" to read from a file
+    directly.  In both case empty lines and comment lines (starting with #)
+    will be skipped.  Obviously you cannot use "-" for both <file>/<command>
+    and <host> simultaneously.
+
+  Commands
+    The syntax expect <command> to be passed as a single argument.  This means
+    that you must enclose it in quotes if it needs arguments.
+
+  Logfiles
+    When using the -l option, two files are created by commands:
+      .log file contains parallel.pl messages and command stdout/stderr;
+      .out file contains command stdout/stderr.
+    If the if the command failed somewhere, the following file is created:
+      .fail file contains the reason of the failure.
+
+  Status field in summary
+    A status of "-" means that an error occured, but coming from parallel.pl's
+    internals instead of the program intended to run.  In that case, the
+    line count in 0 and the last line field is the error.  This includes a
+    failed ping(8) or scp(8).  If you want to know what's happened with
+    these commands, you have to either look at the .log file if -l was used
+    or use -vv.
