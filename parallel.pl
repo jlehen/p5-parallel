@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# 2008-2011 Jeremie Le Hen <jeremie.le-hen@sgcib.com>
+# 2008-2012 Jeremie Le Hen <jeremie@le-hen.org>
 #
 # Based on multremsh.pl:
 # 2004 Vincent Haverlant <vincent.haverlant@sgcib.com> 
