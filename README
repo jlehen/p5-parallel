@@ -3,11 +3,17 @@ and push-then-execute files on a large number of servers through SSH.  It
 doesn't rely on an agent but obviously requires a "no password" SSH
 authentication.
 
+Concurrency is achieved using sub-processes.  Downward communication is done
+through a dedicated pipe, one for each child process.  Upward communication
+is done through a common upward pipe, whose access is synchronized by a
+semaphore.  Each execution time is bounded and looked after by an additional
+process.
+
 Cool features:
 - log everything in separate log file for each host;
 - summary table at the end of the run;
 - combine multiple commands on multiple hosts;
-
+- changes sub-process names to show what is being done and progress.
 
 
 Usage:
