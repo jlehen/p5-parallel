@@ -1,3 +1,24 @@
+Quick examples
+==============
+
+1. You have a script locally that you need to execute on some remote hosts:
+
+ # parallel.pl pushnexec 'myscript.sh -a -q' on host1 host2 host3
+
+2. You want to update the HTTP daemon configuation and restart it on all your
+   webservers listed in websrv.txt:
+
+ # parallel.pl push httpd.conf in /etc/httpd on file:websrv.txt
+ # parallel.pl exec '/etc/rc.d/httpd restart' on file:websrv.txt
+
+3. You want to fetch /etc/passwd from all your webservers:
+
+ # parallel.pl pull /etc/passwd on file:websrv.txt
+
+
+Description
+===========
+
 ``parallel'' is a tool written in Perl to execute commands, push/pull files
 and push-then-execute files on a large number of servers through SSH.  It
 doesn't rely on an agent but obviously requires a "no password" SSH
@@ -16,7 +37,8 @@ Cool features:
 - changes sub-process names to show what is being done and progress.
 
 
-Usage:
+Usage
+=====
 
 * Detailled informations and example for each command:
     parallel.pl help push
